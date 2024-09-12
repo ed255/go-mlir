@@ -1,0 +1,142 @@
+(*ast.File)({
+ Doc: (*ast.CommentGroup)(<nil>),
+ Package: (token.Pos) 1,
+ Name: (*ast.Ident)({
+  NamePos: (token.Pos) 9,
+  Name: (string) (len=4) "main",
+  Obj: (*ast.Object)(<nil>)
+ }),
+ Decls: ([]ast.Decl) (len=1) {
+  (*ast.FuncDecl)({
+   Doc: (*ast.CommentGroup)(<nil>),
+   Recv: (*ast.FieldList)(<nil>),
+   Name: (*ast.Ident)({
+    NamePos: (token.Pos) 20,
+    Name: (string) (len=10) "entrypoint",
+    Obj: (*ast.Object)(<nil>)
+   }),
+   Type: (*ast.FuncType)({
+    Func: (token.Pos) 15,
+    TypeParams: (*ast.FieldList)(<nil>),
+    Params: (*ast.FieldList)({
+     Opening: (token.Pos) 30,
+     List: ([]*ast.Field) (len=1) {
+      (*ast.Field)({
+       Doc: (*ast.CommentGroup)(<nil>),
+       Names: ([]*ast.Ident) (len=1) {
+        (*ast.Ident)({
+         NamePos: (token.Pos) 31,
+         Name: (string) (len=1) "a",
+         Obj: (*ast.Object)(<nil>)
+        })
+       },
+       Type: (*ast.Ident)({
+        NamePos: (token.Pos) 33,
+        Name: (string) (len=5) "uint8",
+        Obj: (*ast.Object)(<nil>)
+       }),
+       Tag: (*ast.BasicLit)(<nil>),
+       Comment: (*ast.CommentGroup)(<nil>)
+      })
+     },
+     Closing: (token.Pos) 38
+    }),
+    Results: (*ast.FieldList)({
+     Opening: (token.Pos) 0,
+     List: ([]*ast.Field) (len=1) {
+      (*ast.Field)({
+       Doc: (*ast.CommentGroup)(<nil>),
+       Names: ([]*ast.Ident) <nil>,
+       Type: (*ast.Ident)({
+        NamePos: (token.Pos) 40,
+        Name: (string) (len=5) "uint8",
+        Obj: (*ast.Object)(<nil>)
+       }),
+       Tag: (*ast.BasicLit)(<nil>),
+       Comment: (*ast.CommentGroup)(<nil>)
+      })
+     },
+     Closing: (token.Pos) 0
+    })
+   }),
+   Body: (*ast.BlockStmt)({
+    Lbrace: (token.Pos) 46,
+    List: ([]ast.Stmt) (len=4) {
+     (*ast.AssignStmt)({
+      Lhs: ([]ast.Expr) (len=1) {
+       (*ast.Ident)({
+        NamePos: (token.Pos) 49,
+        Name: (string) (len=1) "a",
+        Obj: (*ast.Object)(<nil>)
+       })
+      },
+      TokPos: (token.Pos) 51,
+      Tok: (token.Token) 23,
+      Rhs: ([]ast.Expr) (len=1) {
+       (*ast.BasicLit)({
+        ValuePos: (token.Pos) 54,
+        Kind: (token.Token) 5,
+        Value: (string) (len=1) "1"
+       })
+      }
+     }),
+     (*ast.AssignStmt)({
+      Lhs: ([]ast.Expr) (len=1) {
+       (*ast.Ident)({
+        NamePos: (token.Pos) 57,
+        Name: (string) (len=1) "a",
+        Obj: (*ast.Object)(<nil>)
+       })
+      },
+      TokPos: (token.Pos) 59,
+      Tok: (token.Token) 23,
+      Rhs: ([]ast.Expr) (len=1) {
+       (*ast.BasicLit)({
+        ValuePos: (token.Pos) 62,
+        Kind: (token.Token) 5,
+        Value: (string) (len=1) "2"
+       })
+      }
+     }),
+     (*ast.AssignStmt)({
+      Lhs: ([]ast.Expr) (len=1) {
+       (*ast.Ident)({
+        NamePos: (token.Pos) 65,
+        Name: (string) (len=1) "a",
+        Obj: (*ast.Object)(<nil>)
+       })
+      },
+      TokPos: (token.Pos) 67,
+      Tok: (token.Token) 23,
+      Rhs: ([]ast.Expr) (len=1) {
+       (*ast.BasicLit)({
+        ValuePos: (token.Pos) 70,
+        Kind: (token.Token) 5,
+        Value: (string) (len=1) "3"
+       })
+      }
+     }),
+     (*ast.ReturnStmt)({
+      Return: (token.Pos) 73,
+      Results: ([]ast.Expr) (len=1) {
+       (*ast.Ident)({
+        NamePos: (token.Pos) 80,
+        Name: (string) (len=1) "a",
+        Obj: (*ast.Object)(<nil>)
+       })
+      }
+     })
+    },
+    Rbrace: (token.Pos) 82
+   })
+  })
+ },
+ FileStart: (token.Pos) 1,
+ FileEnd: (token.Pos) 84,
+ Scope: (*ast.Scope)(<nil>),
+ Imports: ([]*ast.ImportSpec) <nil>,
+ Unresolved: ([]*ast.Ident) <nil>,
+ Comments: ([]*ast.CommentGroup) <nil>,
+ GoVersion: (string) ""
+})
+
