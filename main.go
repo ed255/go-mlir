@@ -40,6 +40,7 @@ type Translator struct {
 	varCnt    int
 	constCnt  int
 	typeInfo  types.Info
+	funcs     map[string]FuncArgs
 	// Mapping of block depth -> Block
 	blocks []Block
 }
@@ -51,6 +52,7 @@ func NewTranslator(out io.Writer, typeInfo types.Info) Translator {
 		constCnt:  0,
 		out:       out,
 		typeInfo:  typeInfo,
+		funcs:     make(map[string]FuncArgs),
 		blocks:    []Block{},
 	}
 }
@@ -107,25 +109,31 @@ func (t *Translator) NewVar(name string, nTyp ast.Expr) *Var {
 	}
 }
 
-func (t *Translator) GetVar(name string) *Var {
+func (t *Translator) GetVar(name string, nTyp ast.Expr) *Var {
 	ver, ok := t.curBlock().vars[name]
 	if !ok {
 		panic(fmt.Errorf("Var \"%v\" not found in current block", name))
 	}
+	signed, size := t.DecodeType(nTyp)
 	return &Var{
-		name: fmt.Sprintf("%v%v", name, ver),
+		name:   fmt.Sprintf("%v%v", name, ver),
+		signed: signed,
+		size:   size,
 	}
 }
 
-func (t *Translator) GetVarNextVer(name string) *Var {
+func (t *Translator) GetVarNextVer(name string, nTyp ast.Expr) *Var {
 	block := t.curBlock()
 	ver, ok := block.vars[name]
 	if !ok {
 		panic(fmt.Errorf("Var \"%v\" not found in current block", name))
 	}
 	block.vars[name] = ver + 1
+	signed, size := t.DecodeType(nTyp)
 	return &Var{
-		name: fmt.Sprintf("%v%v", name, ver+1),
+		name:   fmt.Sprintf("%v%v", name, ver+1),
+		signed: signed,
+		size:   size,
 	}
 }
 
@@ -140,9 +148,12 @@ func (t *Translator) NewAnonVar(nTyp ast.Expr) *Var {
 	return &v
 }
 
-func (t *Translator) NewAnonConst() *Var {
+func (t *Translator) NewAnonConst(nTyp ast.Expr) *Var {
+	signed, size := t.DecodeType(nTyp)
 	v := Var{
-		name: fmt.Sprintf("c%v", t.constCnt),
+		name:   fmt.Sprintf("c%v", t.constCnt),
+		signed: signed,
+		size:   size,
 	}
 	t.constCnt += 1
 	return &v
@@ -168,6 +179,7 @@ func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
 		vy := t.EmitExpr(s.Y, nil, VarGet)
 		if vrFn != nil {
 			vr = vrFn()
+			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
 		} else {
 			vr = t.NewAnonVar(s)
 			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
@@ -181,23 +193,50 @@ func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
 		} else {
 			switch varOpt {
 			case VarNew:
-				vr = t.NewVar(s.Name, nil)
+				vr = t.NewVar(s.Name, s)
 			case VarGet:
-				vr = t.GetVar(s.Name)
+				vr = t.GetVar(s.Name, s)
 			case VarNext:
-				vr = t.GetVarNextVer(s.Name)
+				vr = t.GetVarNextVer(s.Name, s)
 			}
 		}
 		return *vr
 	case *ast.BasicLit:
-		ty := t.TranslateType(x)
 		if vrFn != nil {
 			vr = vrFn()
 		} else {
-			vr = t.NewAnonConst()
+			vr = t.NewAnonConst(s)
 		}
-		t.Printf("%%%v = arith.constant %v : %v\n", vr.name, s.Value, ty)
+		t.Printf("parameter %v = %v;\n", vr.name, s.Value)
 		return *vr
+	case *ast.CallExpr:
+		ident := s.Fun.(*ast.Ident)
+		fn := t.funcs[ident.Name]
+		if len(fn.outputs) > 1 {
+			panic(fmt.Errorf("unsupported multiple func outputs"))
+		}
+
+		var inputs []Var
+		for _, arg := range s.Args {
+			inputs = append(inputs, t.EmitExpr(arg, nil, VarGet))
+		}
+		var outputs []Var
+		for _ = range fn.outputs {
+			vr = t.NewAnonVar(s)
+			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
+			outputs = append(outputs, *vr)
+		}
+
+		t.Printf("%v _%v_ (\n", ident.Name, t.varCnt)
+		t.varCnt += 1
+		for i, input := range fn.inputs {
+			t.Printf("  .%v(%v),\n", input, inputs[i].name)
+		}
+		for i, output := range fn.outputs {
+			t.Printf("  .%v(%v),\n", output, outputs[i].name)
+		}
+		t.Printf(");\n")
+		return outputs[0]
 	default:
 		panic(fmt.Errorf("unsupported Expr: %+T", x))
 	}
@@ -359,22 +398,56 @@ func (t *Translator) emit(node ast.Node) {
 func (t *Translator) Emit(node ast.Node) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			var ok bool
+			err, ok = r.(error)
+			if !ok {
+				panic(r)
+			}
+
 			fmt.Println("DEBUG: Error backtrace:")
 			trace := debug.Stack()
 			traceLines := bytes.Split(trace, []byte("\n"))
 			trace = bytes.Join(traceLines[7:], []byte("\n"))
 			fmt.Println(string(trace))
-			err = r.(error)
 		}
 	}()
+	t.FindFuncs(node)
 	t.emit(node)
 	return nil
+}
+
+type FuncArgs struct {
+	inputs  []string
+	outputs []string
+}
+
+func (t *Translator) FindFuncs(node ast.Node) {
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			var inputs []string
+			for _, field := range x.Type.Params.List {
+				for _, name := range field.Names {
+					inputs = append(inputs, fmt.Sprintf("%v0", name.Name))
+				}
+			}
+			var outputs []string
+			for i, field := range x.Type.Results.List {
+				if len(field.Names) != 0 {
+					panic(fmt.Errorf("unsupported return parameter names"))
+				}
+				outputs = append(outputs, fmt.Sprintf("_out%v_0", i))
+			}
+			t.funcs[x.Name.Name] = FuncArgs{inputs: inputs, outputs: outputs}
+		}
+		return true
+	})
 }
 
 func main() {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "samples/add.go", nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, "samples/func.go", nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
