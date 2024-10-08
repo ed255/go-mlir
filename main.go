@@ -101,42 +101,42 @@ func (t *Translator) curBlock() *Block {
 	return &t.blocks[len(t.blocks)-1]
 }
 
-func (t *Translator) newVar(name string, typ types.Type) *Var {
+func (t *Translator) newVar(name string, typ types.Type) Var {
 	t.curBlock().vars[name] = 0
 
 	signed, size := t.decodeType(typ)
-	return &Var{
+	return Var{
 		name:   fmt.Sprintf("%v0", name),
 		signed: signed,
 		size:   size,
 	}
 }
 
-func (t *Translator) NewVar(name string, nTyp ast.Expr) *Var {
+func (t *Translator) NewVar(name string, nTyp ast.Expr) Var {
 	t.curBlock().vars[name] = 0
 
 	signed, size := t.DecodeType(nTyp)
-	return &Var{
+	return Var{
 		name:   fmt.Sprintf("%v0", name),
 		signed: signed,
 		size:   size,
 	}
 }
 
-func (t *Translator) GetVar(name string, nTyp ast.Expr) *Var {
+func (t *Translator) GetVar(name string, nTyp ast.Expr) Var {
 	ver, ok := t.curBlock().vars[name]
 	if !ok {
 		panic(fmt.Errorf("Var \"%v\" not found in current block", name))
 	}
 	signed, size := t.DecodeType(nTyp)
-	return &Var{
+	return Var{
 		name:   fmt.Sprintf("%v%v", name, ver),
 		signed: signed,
 		size:   size,
 	}
 }
 
-func (t *Translator) GetVarNextVer(name string, nTyp ast.Expr) *Var {
+func (t *Translator) GetVarNextVer(name string, nTyp ast.Expr) Var {
 	block := t.curBlock()
 	ver, ok := block.vars[name]
 	if !ok {
@@ -144,14 +144,14 @@ func (t *Translator) GetVarNextVer(name string, nTyp ast.Expr) *Var {
 	}
 	block.vars[name] = ver + 1
 	signed, size := t.DecodeType(nTyp)
-	return &Var{
+	return Var{
 		name:   fmt.Sprintf("%v%v", name, ver+1),
 		signed: signed,
 		size:   size,
 	}
 }
 
-func (t *Translator) NewAnonVar(nTyp ast.Expr) *Var {
+func (t *Translator) NewAnonVar(nTyp ast.Expr) Var {
 	signed, size := t.DecodeType(nTyp)
 	v := Var{
 		name:   fmt.Sprintf("_%v_", t.varCnt),
@@ -159,10 +159,10 @@ func (t *Translator) NewAnonVar(nTyp ast.Expr) *Var {
 		size:   size,
 	}
 	t.varCnt += 1
-	return &v
+	return v
 }
 
-func (t *Translator) newAnonVar(typ types.Type) *Var {
+func (t *Translator) newAnonVar(typ types.Type) Var {
 	signed, size := t.decodeType(typ)
 	v := Var{
 		name:   fmt.Sprintf("_%v_", t.varCnt),
@@ -170,10 +170,10 @@ func (t *Translator) newAnonVar(typ types.Type) *Var {
 		size:   size,
 	}
 	t.varCnt += 1
-	return &v
+	return v
 }
 
-func (t *Translator) NewAnonConst(nTyp ast.Expr) *Var {
+func (t *Translator) NewAnonConst(nTyp ast.Expr) Var {
 	signed, size := t.DecodeType(nTyp)
 	v := Var{
 		name:   fmt.Sprintf("c%v", t.constCnt),
@@ -181,7 +181,7 @@ func (t *Translator) NewAnonConst(nTyp ast.Expr) *Var {
 		size:   size,
 	}
 	t.constCnt += 1
-	return &v
+	return v
 }
 
 func (t *Translator) errcheck(err error) {
@@ -196,64 +196,52 @@ func (t *Translator) Printf(format string, a ...any) {
 	t.errcheck(err)
 }
 
-func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) []Var {
-	var vr *Var
+func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 	switch s := x.(type) {
 	case *ast.BinaryExpr:
-		vx := t.EmitExpr(s.X, nil, VarGet)[0]
-		vy := t.EmitExpr(s.Y, nil, VarGet)[0]
-		if vrFn != nil {
-			vr = vrFn()
-			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
-		} else {
-			vr = t.NewAnonVar(s)
-			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
-		}
+		vx := t.EmitExpr(s.X, VarGet)[0]
+		vy := t.EmitExpr(s.Y, VarGet)[0]
+		vr := t.NewAnonVar(s)
+		t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
 		op := t.TranslateOp(s.Op)
 		t.Printf("assign %v = %v %v %v;\n", vr.name, vx.name, op, vy.name)
-		return []Var{*vr}
+		return []Var{vr}
 	case *ast.Ident:
-		if vrFn != nil {
-			vr = vrFn()
-		} else {
-			switch varOpt {
-			case VarNew:
-				vr = t.NewVar(s.Name, s)
-			case VarGet:
-				vr = t.GetVar(s.Name, s)
-			case VarNext:
-				vr = t.GetVarNextVer(s.Name, s)
-			}
+		var vr Var
+		switch varOpt {
+		case VarNew:
+			vr = t.NewVar(s.Name, s)
+			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
+		case VarGet:
+			vr = t.GetVar(s.Name, s)
+		case VarNext:
+			vr = t.GetVarNextVer(s.Name, s)
+			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
 		}
-		t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
-		return []Var{*vr}
+		return []Var{vr}
 	case *ast.BasicLit:
-		if vrFn != nil {
-			vr = vrFn()
-		} else {
-			vr = t.NewAnonConst(s)
-		}
+		vr := t.NewAnonConst(s)
 		t.Printf("parameter [%v:0] %v = %v;\n", vr.size-1, vr.name, s.Value)
-		return []Var{*vr}
+		return []Var{vr}
 	case *ast.CallExpr:
 		ident := s.Fun.(*ast.Ident)
 		fn := t.funcs[ident.Name]
 
 		var inputs []Var
 		for _, arg := range s.Args {
-			inputs = append(inputs, t.EmitExpr(arg, nil, VarGet)[0])
+			inputs = append(inputs, t.EmitExpr(arg, VarGet)[0])
 		}
 		var outputs []Var
 		if len(fn.outputs) == 1 {
-			vr = t.NewAnonVar(s)
+			vr := t.NewAnonVar(s)
 			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
-			outputs = append(outputs, *vr)
+			outputs = append(outputs, vr)
 		} else if len(fn.outputs) > 1 {
 			tuple := t.typeInfo.TypeOf(s).(*types.Tuple)
 			for i := 0; i < tuple.Len(); i++ {
-				vr = t.newAnonVar(tuple.At(i).Type())
+				vr := t.newAnonVar(tuple.At(i).Type())
 				t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
-				outputs = append(outputs, *vr)
+				outputs = append(outputs, vr)
 			}
 		}
 
@@ -276,7 +264,7 @@ func (t *Translator) EmitReturnStmt(x *ast.ReturnStmt) {
 	block := t.curBlock()
 	i := 0
 	for _, r := range x.Results {
-		vs := t.EmitExpr(r, nil, VarGet)
+		vs := t.EmitExpr(r, VarGet)
 		for _, v := range vs {
 			t.Printf("assign %v = %v;\n", block.returnVars[i].name, v.name)
 			i += 1
@@ -285,37 +273,23 @@ func (t *Translator) EmitReturnStmt(x *ast.ReturnStmt) {
 }
 
 func (t *Translator) EmitAssignStmt(x *ast.AssignStmt) {
-	// fmt.Printf("DBG token: %+v\n", x.Tok)
-	// if len(x.Lhs) != 1 || len(x.Rhs) != 1 {
-	// 	panic(fmt.Errorf("unsupported"))
-	// }
-	// lhs, rhs := x.Lhs[0], x.Rhs[0]
-	// if x.Tok == token.DEFINE {
-	// 	vlhs := t.EmitExpr(lhs, nil, VarNew)
-	// 	_ = vlhs
-	// 	panic("TODO")
-	// }
-	// vlhsFn := func() *Var { vr := t.EmitExpr(lhs, nil, VarNext); return &vr }
 	switch x.Tok {
 	case token.DEFINE:
-		// var vrhss []Var
-		// for _, rhs := range x.Rhs {
-		// 	vrhs := t.EmitExpr(rhs, nil, VarNew)
-		// 	vrhss = append(vrhss, vrhs)
-		// }
-
-		// var vlhss []Var
-		// for _, lhs := range x.Lhs {
-		// 	vlhs := t.EmitExpr(lhs, nil, VarNew)
-		// 	vlhss = append(vlhss, vlhs)
-		// }
-		panic("TODO")
+		i := 0
+		for _, rhs := range x.Rhs {
+			results := t.EmitExpr(rhs, VarGet)
+			for _, r := range results {
+				vl := t.EmitExpr(x.Lhs[i], VarNew)[0]
+				t.Printf("assign %v = %v;\n", vl.name, r.name)
+				i += 1
+			}
+		}
 	case token.ASSIGN:
 		i := 0
 		for _, rhs := range x.Rhs {
-			results := t.EmitExpr(rhs, nil, VarGet)
+			results := t.EmitExpr(rhs, VarGet)
 			for _, r := range results {
-				vl := t.EmitExpr(x.Lhs[i], nil, VarNext)[0]
+				vl := t.EmitExpr(x.Lhs[i], VarNext)[0]
 				t.Printf("assign %v = %v;\n", vl.name, r.name)
 				i += 1
 			}
@@ -424,7 +398,7 @@ func (t *Translator) EmitFuncDecl(x *ast.FuncDecl) {
 		}
 		v := t.NewVar(fmt.Sprintf("_out%v_", i), field.Type)
 		t.Printf("  output %v %v,\n", typeFmt(v.signed, v.size), v.name)
-		block.returnVars = append(block.returnVars, *v)
+		block.returnVars = append(block.returnVars, v)
 	}
 	t.Printf(");\n")
 
@@ -498,7 +472,7 @@ func (t *Translator) FindFuncs(node ast.Node) {
 func main() {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "samples/assign.go", nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, "samples/define.go", nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
