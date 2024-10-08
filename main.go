@@ -66,7 +66,10 @@ func (t *Translator) PopBlock() {
 }
 
 func (t *Translator) DecodeType(nTyp ast.Expr) (bool, int) {
-	typ := t.typeInfo.TypeOf(nTyp)
+	return t.decodeType(t.typeInfo.TypeOf(nTyp))
+}
+
+func (t *Translator) decodeType(typ types.Type) (bool, int) {
 	if types.Identical(typ, types.Typ[types.Bool]) {
 		return false, 1
 	} else if types.Identical(typ, types.Typ[types.Int]) {
@@ -96,6 +99,17 @@ func (t *Translator) DecodeType(nTyp ast.Expr) (bool, int) {
 
 func (t *Translator) curBlock() *Block {
 	return &t.blocks[len(t.blocks)-1]
+}
+
+func (t *Translator) newVar(name string, typ types.Type) *Var {
+	t.curBlock().vars[name] = 0
+
+	signed, size := t.decodeType(typ)
+	return &Var{
+		name:   fmt.Sprintf("%v0", name),
+		signed: signed,
+		size:   size,
+	}
 }
 
 func (t *Translator) NewVar(name string, nTyp ast.Expr) *Var {
@@ -148,6 +162,17 @@ func (t *Translator) NewAnonVar(nTyp ast.Expr) *Var {
 	return &v
 }
 
+func (t *Translator) newAnonVar(typ types.Type) *Var {
+	signed, size := t.decodeType(typ)
+	v := Var{
+		name:   fmt.Sprintf("_%v_", t.varCnt),
+		signed: signed,
+		size:   size,
+	}
+	t.varCnt += 1
+	return &v
+}
+
 func (t *Translator) NewAnonConst(nTyp ast.Expr) *Var {
 	signed, size := t.DecodeType(nTyp)
 	v := Var{
@@ -171,12 +196,12 @@ func (t *Translator) Printf(format string, a ...any) {
 	t.errcheck(err)
 }
 
-func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
+func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) []Var {
 	var vr *Var
 	switch s := x.(type) {
 	case *ast.BinaryExpr:
-		vx := t.EmitExpr(s.X, nil, VarGet)
-		vy := t.EmitExpr(s.Y, nil, VarGet)
+		vx := t.EmitExpr(s.X, nil, VarGet)[0]
+		vy := t.EmitExpr(s.Y, nil, VarGet)[0]
 		if vrFn != nil {
 			vr = vrFn()
 			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
@@ -186,7 +211,7 @@ func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
 		}
 		op := t.TranslateOp(s.Op)
 		t.Printf("assign %v = %v %v %v;\n", vr.name, vx.name, op, vy.name)
-		return *vr
+		return []Var{*vr}
 	case *ast.Ident:
 		if vrFn != nil {
 			vr = vrFn()
@@ -200,31 +225,36 @@ func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
 				vr = t.GetVarNextVer(s.Name, s)
 			}
 		}
-		return *vr
+		t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
+		return []Var{*vr}
 	case *ast.BasicLit:
 		if vrFn != nil {
 			vr = vrFn()
 		} else {
 			vr = t.NewAnonConst(s)
 		}
-		t.Printf("parameter %v = %v;\n", vr.name, s.Value)
-		return *vr
+		t.Printf("parameter [%v:0] %v = %v;\n", vr.size-1, vr.name, s.Value)
+		return []Var{*vr}
 	case *ast.CallExpr:
 		ident := s.Fun.(*ast.Ident)
 		fn := t.funcs[ident.Name]
-		if len(fn.outputs) > 1 {
-			panic(fmt.Errorf("unsupported multiple func outputs"))
-		}
 
 		var inputs []Var
 		for _, arg := range s.Args {
-			inputs = append(inputs, t.EmitExpr(arg, nil, VarGet))
+			inputs = append(inputs, t.EmitExpr(arg, nil, VarGet)[0])
 		}
 		var outputs []Var
-		for _ = range fn.outputs {
+		if len(fn.outputs) == 1 {
 			vr = t.NewAnonVar(s)
 			t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
 			outputs = append(outputs, *vr)
+		} else if len(fn.outputs) > 1 {
+			tuple := t.typeInfo.TypeOf(s).(*types.Tuple)
+			for i := 0; i < tuple.Len(); i++ {
+				vr = t.newAnonVar(tuple.At(i).Type())
+				t.Printf("%v %v;\n", typeFmt(vr.signed, vr.size), vr.name)
+				outputs = append(outputs, *vr)
+			}
 		}
 
 		t.Printf("%v _%v_ (\n", ident.Name, t.varCnt)
@@ -236,39 +266,60 @@ func (t *Translator) EmitExpr(x ast.Expr, vrFn func() *Var, varOpt VarOpt) Var {
 			t.Printf("  .%v(%v),\n", output, outputs[i].name)
 		}
 		t.Printf(");\n")
-		return outputs[0]
+		return outputs
 	default:
 		panic(fmt.Errorf("unsupported Expr: %+T", x))
 	}
 }
 
 func (t *Translator) EmitReturnStmt(x *ast.ReturnStmt) {
-	if len(x.Results) == 0 {
-		return
-	} else if len(x.Results) != 1 {
-		panic(fmt.Errorf("unsupported"))
-	}
 	block := t.curBlock()
-	for i, r := range x.Results {
-		v := t.EmitExpr(r, nil, VarGet)
-		t.Printf("assign %v = %v;\n", block.returnVars[i].name, v.name)
+	i := 0
+	for _, r := range x.Results {
+		vs := t.EmitExpr(r, nil, VarGet)
+		for _, v := range vs {
+			t.Printf("assign %v = %v;\n", block.returnVars[i].name, v.name)
+			i += 1
+		}
 	}
 }
 
 func (t *Translator) EmitAssignStmt(x *ast.AssignStmt) {
-	if len(x.Lhs) != 1 || len(x.Rhs) != 1 {
-		panic(fmt.Errorf("unsupported"))
-	}
-	lhs, rhs := x.Lhs[0], x.Rhs[0]
-	if x.Tok == token.DEFINE {
-		vlhs := t.EmitExpr(lhs, nil, VarNew)
-		_ = vlhs
-		panic("TODO")
-	}
-	vlhsFn := func() *Var { vr := t.EmitExpr(lhs, nil, VarNext); return &vr }
+	// fmt.Printf("DBG token: %+v\n", x.Tok)
+	// if len(x.Lhs) != 1 || len(x.Rhs) != 1 {
+	// 	panic(fmt.Errorf("unsupported"))
+	// }
+	// lhs, rhs := x.Lhs[0], x.Rhs[0]
+	// if x.Tok == token.DEFINE {
+	// 	vlhs := t.EmitExpr(lhs, nil, VarNew)
+	// 	_ = vlhs
+	// 	panic("TODO")
+	// }
+	// vlhsFn := func() *Var { vr := t.EmitExpr(lhs, nil, VarNext); return &vr }
 	switch x.Tok {
+	case token.DEFINE:
+		// var vrhss []Var
+		// for _, rhs := range x.Rhs {
+		// 	vrhs := t.EmitExpr(rhs, nil, VarNew)
+		// 	vrhss = append(vrhss, vrhs)
+		// }
+
+		// var vlhss []Var
+		// for _, lhs := range x.Lhs {
+		// 	vlhs := t.EmitExpr(lhs, nil, VarNew)
+		// 	vlhss = append(vlhss, vlhs)
+		// }
+		panic("TODO")
 	case token.ASSIGN:
-		t.EmitExpr(rhs, vlhsFn, VarGet)
+		i := 0
+		for _, rhs := range x.Rhs {
+			results := t.EmitExpr(rhs, nil, VarGet)
+			for _, r := range results {
+				vl := t.EmitExpr(x.Lhs[i], nil, VarNext)[0]
+				t.Printf("assign %v = %v;\n", vl.name, r.name)
+				i += 1
+			}
+		}
 	case token.ADD_ASSIGN:
 		panic("TODO")
 	default:
@@ -351,9 +402,9 @@ func (t *Translator) TranslateType(n ast.Expr) string {
 
 func typeFmt(signed bool, size int) string {
 	if signed {
-		return fmt.Sprintf("signed wire [%v:0]", size)
+		return fmt.Sprintf("signed wire [%v:0]", size-1)
 	} else {
-		return fmt.Sprintf("wire [%v:0]", size)
+		return fmt.Sprintf("wire [%v:0]", size-1)
 	}
 }
 
@@ -447,7 +498,7 @@ func (t *Translator) FindFuncs(node ast.Node) {
 func main() {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "samples/func.go", nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, "samples/assign.go", nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
