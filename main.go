@@ -43,14 +43,18 @@ type Var struct {
 	signed  bool
 	version uint
 	parent  *Var
+	blockId int
 }
 
 func (v *Var) NameVer() string {
-	if v.version == 0 {
-		return fmt.Sprintf("%v", v.name)
-	} else {
-		return fmt.Sprintf("%v_%v", v.name, v.version)
+	s := fmt.Sprintf("%v", v.name)
+	if v.blockId != 0 {
+		s += fmt.Sprintf("_b%v", v.blockId)
 	}
+	if v.version != 0 {
+		s += fmt.Sprintf("_%v", v.version)
+	}
+	return s
 }
 
 func (v *Var) EmitDeclare(t *Translator) {
@@ -62,12 +66,12 @@ func (v *Var) EmitDeclareConst(t *Translator, value int64) {
 }
 
 type Block struct {
+	id int
 	// Mapping of variable name -> SSA version
 	vars       map[string]*Var
 	returnVars []*Var
-	// True if we're in a branch block
-	branch   bool
-	branchId uint
+	// true if we're in a branch block
+	branch bool
 }
 
 type Translator struct {
@@ -75,6 +79,7 @@ type Translator struct {
 	out       io.Writer
 	varCnt    int
 	constCnt  int
+	blockCnt  int
 	typeInfo  types.Info
 	funcs     map[string]FuncArgs
 	structs   map[string]Struct
@@ -96,7 +101,9 @@ func NewTranslator(out io.Writer, typeInfo types.Info) Translator {
 }
 
 func (t *Translator) PushBlock() {
-	t.blocks = append(t.blocks, Block{vars: make(map[string]*Var)})
+	id := t.blockCnt
+	t.blockCnt += 1
+	t.blocks = append(t.blocks, Block{id: id, vars: make(map[string]*Var)})
 }
 
 func (t *Translator) PopBlock() Block {
@@ -142,8 +149,9 @@ func (t *Translator) curBlock() *Block {
 }
 
 func (t *Translator) NewVar(name string, signed bool, size int) *Var {
-	v := &Var{name: name, signed: signed, size: size, version: 0}
-	t.curBlock().vars[name] = v
+	curBlock := t.curBlock()
+	v := &Var{name: name, signed: signed, size: size, version: 0, blockId: curBlock.id}
+	curBlock.vars[name] = v
 	return v
 }
 
@@ -152,28 +160,30 @@ func (t *Translator) NewVarExpr(name string, nTyp ast.Expr) *Var {
 	return t.NewVar(name, signed, size)
 }
 
-func (t *Translator) getVar(name string) (int, *Var) {
+func (t *Translator) getVar(name string) (int, *Var, error) {
 	for i := 0; i < len(t.blocks); i++ {
 		depth := len(t.blocks) - 1 - i
-		v, ok := t.blocks[depth].vars[name]
+		block := t.blocks[depth]
+		v, ok := block.vars[name]
 		if ok {
-			return depth, v
+			return depth, v, nil
 		}
 	}
-	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
+	return 0, nil, fmt.Errorf("Var \"%v\" not found in any block", name)
 }
 
 func (t *Translator) GetVar(name string) *Var {
-	_, v := t.getVar(name)
+	_, v, err := t.getVar(name)
+	t.errcheck(err)
 	return v
 }
 
 func (t *Translator) GetVarNextVer(name string) *Var {
-	depth, v := t.getVar(name)
+	depth, v, err := t.getVar(name)
+	t.errcheck(err)
 	curBlock := t.curBlock()
 	if curBlock.branch && depth != len(t.blocks)-1 {
-		name := fmt.Sprintf("%v_b%v", v.NameVer(), curBlock.branchId)
-		v2 := t.NewVar(name, v.signed, v.size)
+		v2 := t.NewVar(v.NameVer(), v.signed, v.size)
 		v2.parent = v
 		return v2
 	} else {
@@ -426,22 +436,22 @@ func (t *Translator) EmitIfStmt(x *ast.IfStmt) {
 
 	t.PushBlock()
 	t.curBlock().branch = true
-	t.curBlock().branchId = 0
 	t.Printf("/* if %v */\n", cond[0].NameVer())
 	t.indentLvl += 1
 	t.EmitBlockStmt(x.Body)
 	t.indentLvl -= 1
 	block := t.PopBlock()
+	_ = block
 
-	for _, v := range block.vars {
-		if v.parent != nil {
-			parent := t.GetVar(v.parent.name)
-			parentNext := t.GetVarNextVer(v.parent.name)
-			// TODO: Emit the following expression:
-			// parentNext = (cond & v) | (!cond & parent)
-			panic("WIP")
-		}
-	}
+	// for _, v := range block.vars {
+	// 	if v.parent != nil {
+	// 		parent := t.GetVar(v.parent.name)
+	// 		parentNext := t.GetVarNextVer(v.parent.name)
+	// 		// TODO: Emit the following expression:
+	// 		// parentNext = (cond & v) | (!cond & parent)
+	// 		panic("WIP")
+	// 	}
+	// }
 
 	if x.Else != nil {
 		panic("TODO")
@@ -517,6 +527,12 @@ func (t *Translator) EmitBlockStmt(x *ast.BlockStmt) {
 			t.EmitDeclStmt(s)
 		case *ast.IfStmt:
 			t.EmitIfStmt(s)
+		case *ast.BlockStmt:
+			t.PushBlock()
+			t.indentLvl += 1
+			t.EmitBlockStmt(s)
+			t.indentLvl -= 1
+			t.PopBlock()
 		default:
 			panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 		}

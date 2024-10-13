@@ -52,3 +52,14 @@
 - panic
 - println
 - import
+
+---
+
+# AST
+
+File = Decl*
+Decl = FuncDecl | StructDecl | Const | Var | Type
+FuncDecl = Ident FuncType BlockStmt
+BlockStmt = Stmt*
+Stmt = DeclStmt | AssignStmt | ReturnStmt
+DeclStmt = Decl
