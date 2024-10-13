@@ -13,6 +13,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 type VarOpt int
@@ -36,30 +38,36 @@ type Vars struct {
 }
 
 type Var struct {
-	name   string
-	size   int
-	signed bool
-	value  *int64
+	name    string
+	size    int
+	signed  bool
+	version uint
+	parent  *Var
 }
 
-func (v *Var) EmitDeclare(t *Translator) {
-	if v.value == nil {
-		t.Printf("%v %v;\n", typeFmt(v.signed, v.size), v.name)
+func (v *Var) NameVer() string {
+	if v.version == 0 {
+		return fmt.Sprintf("%v", v.name)
 	} else {
-		t.Printf("parameter [%v:0] %v = %v;\n", v.size-1, v.name, *v.value)
+		return fmt.Sprintf("%v_%v", v.name, v.version)
 	}
 }
 
-type VarVer struct {
-	size    int
-	signed  bool
-	version int
+func (v *Var) EmitDeclare(t *Translator) {
+	t.Printf("%v %v;\n", typeFmt(v.signed, v.size), v.NameVer())
+}
+
+func (v *Var) EmitDeclareConst(t *Translator, value int64) {
+	t.Printf("parameter [%v:0] %v = %v;\n", v.size-1, v.name, value)
 }
 
 type Block struct {
 	// Mapping of variable name -> SSA version
-	vars       map[string]VarVer
-	returnVars []Var
+	vars       map[string]*Var
+	returnVars []*Var
+	// True if we're in a branch block
+	branch   bool
+	branchId uint
 }
 
 type Translator struct {
@@ -88,11 +96,13 @@ func NewTranslator(out io.Writer, typeInfo types.Info) Translator {
 }
 
 func (t *Translator) PushBlock() {
-	t.blocks = append(t.blocks, Block{vars: make(map[string]VarVer)})
+	t.blocks = append(t.blocks, Block{vars: make(map[string]*Var)})
 }
 
-func (t *Translator) PopBlock() {
+func (t *Translator) PopBlock() Block {
+	block := t.blocks[len(t.blocks)-1]
 	t.blocks = t.blocks[:len(t.blocks)-1]
+	return block
 }
 
 func (t *Translator) DecodeType(nTyp ast.Expr) (bool, int) {
@@ -100,7 +110,7 @@ func (t *Translator) DecodeType(nTyp ast.Expr) (bool, int) {
 }
 
 func (t *Translator) decodeType(typ types.Type) (bool, int) {
-	if types.Identical(typ, types.Typ[types.Bool]) {
+	if types.Identical(typ, types.Typ[types.Bool]) || types.Identical(typ, types.Typ[types.UntypedBool]) {
 		return false, 1
 	} else if types.Identical(typ, types.Typ[types.Int]) {
 		return true, 32
@@ -131,55 +141,50 @@ func (t *Translator) curBlock() *Block {
 	return &t.blocks[len(t.blocks)-1]
 }
 
-func (t *Translator) NewVar(name string, signed bool, size int) Var {
-	t.curBlock().vars[name] = VarVer{signed: signed, size: size, version: 0}
-	return Var{
-		name:   fmt.Sprintf("%v0", name),
-		signed: signed,
-		size:   size,
-	}
+func (t *Translator) NewVar(name string, signed bool, size int) *Var {
+	v := &Var{name: name, signed: signed, size: size, version: 0}
+	t.curBlock().vars[name] = v
+	return v
 }
 
-func (t *Translator) NewVarExpr(name string, nTyp ast.Expr) Var {
+func (t *Translator) NewVarExpr(name string, nTyp ast.Expr) *Var {
 	signed, size := t.DecodeType(nTyp)
-	t.curBlock().vars[name] = VarVer{signed: signed, size: size, version: 0}
-	return Var{
-		name:   fmt.Sprintf("%v0", name),
-		signed: signed,
-		size:   size,
+	return t.NewVar(name, signed, size)
+}
+
+func (t *Translator) getVar(name string) (int, *Var) {
+	for i := 0; i < len(t.blocks); i++ {
+		depth := len(t.blocks) - 1 - i
+		v, ok := t.blocks[depth].vars[name]
+		if ok {
+			return depth, v
+		}
+	}
+	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
+}
+
+func (t *Translator) GetVar(name string) *Var {
+	_, v := t.getVar(name)
+	return v
+}
+
+func (t *Translator) GetVarNextVer(name string) *Var {
+	depth, v := t.getVar(name)
+	curBlock := t.curBlock()
+	if curBlock.branch && depth != len(t.blocks)-1 {
+		name := fmt.Sprintf("%v_b%v", v.NameVer(), curBlock.branchId)
+		v2 := t.NewVar(name, v.signed, v.size)
+		v2.parent = v
+		return v2
+	} else {
+		v.version += 1
+		return v
 	}
 }
 
-func (t *Translator) GetVar(name string) Var {
-	v, ok := t.curBlock().vars[name]
-	if !ok {
-		panic(fmt.Errorf("Var \"%v\" not found in current block", name))
-	}
-	return Var{
-		name:   fmt.Sprintf("%v%v", name, v.version),
-		signed: v.signed,
-		size:   v.size,
-	}
-}
-
-func (t *Translator) GetVarNextVer(name string) Var {
-	block := t.curBlock()
-	v, ok := block.vars[name]
-	if !ok {
-		panic(fmt.Errorf("Var \"%v\" not found in current block", name))
-	}
-	v.version += 1
-	block.vars[name] = v
-	return Var{
-		name:   fmt.Sprintf("%v%v", name, v.version),
-		signed: v.signed,
-		size:   v.size,
-	}
-}
-
-func (t *Translator) NewAnonVar(nTyp ast.Expr) Var {
+func (t *Translator) NewAnonVar(nTyp ast.Expr) *Var {
 	signed, size := t.DecodeType(nTyp)
-	v := Var{
+	v := &Var{
 		name:   fmt.Sprintf("_%v_", t.varCnt),
 		signed: signed,
 		size:   size,
@@ -188,9 +193,9 @@ func (t *Translator) NewAnonVar(nTyp ast.Expr) Var {
 	return v
 }
 
-func (t *Translator) newAnonVar(typ types.Type) Var {
+func (t *Translator) newAnonVar(typ types.Type) *Var {
 	signed, size := t.decodeType(typ)
-	v := Var{
+	v := &Var{
 		name:   fmt.Sprintf("_%v_", t.varCnt),
 		signed: signed,
 		size:   size,
@@ -199,25 +204,23 @@ func (t *Translator) newAnonVar(typ types.Type) Var {
 	return v
 }
 
-func (t *Translator) NewAnonConst(nTyp ast.Expr, value int64) Var {
+func (t *Translator) NewAnonConst(nTyp ast.Expr) *Var {
 	signed, size := t.DecodeType(nTyp)
-	v := Var{
+	v := &Var{
 		name:   fmt.Sprintf("c%v", t.constCnt),
 		signed: signed,
 		size:   size,
-		value:  &value,
 	}
 	t.constCnt += 1
 	return v
 }
 
-func (t *Translator) newAnonConst(typ types.Type, value int64) Var {
+func (t *Translator) newAnonConst(typ types.Type, value int64) *Var {
 	signed, size := t.decodeType(typ)
-	v := Var{
+	v := &Var{
 		name:   fmt.Sprintf("c%v", t.constCnt),
 		signed: signed,
 		size:   size,
-		value:  &value,
 	}
 	t.constCnt += 1
 	return v
@@ -235,9 +238,9 @@ func (t *Translator) Printf(format string, a ...any) {
 	t.errcheck(err)
 }
 
-func (t *Translator) VarVars(name string, s ast.Expr, varOpt VarOpt) []Var {
+func (t *Translator) VarVars(name string, s ast.Expr, varOpt VarOpt) []*Var {
 	_, isStruct := t.typeInfo.TypeOf(s).Underlying().(*types.Struct)
-	var vars []Var
+	var vars []*Var
 
 	if isStruct {
 		typeName := t.typeInfo.TypeOf(s).(*types.Named).Obj().Name()
@@ -272,11 +275,11 @@ func (t *Translator) VarVars(name string, s ast.Expr, varOpt VarOpt) []Var {
 	return vars
 }
 
-func (t *Translator) IdentVars(s *ast.Ident, varOpt VarOpt) []Var {
+func (t *Translator) IdentVars(s *ast.Ident, varOpt VarOpt) []*Var {
 	return t.VarVars(s.Name, s, varOpt)
 }
 
-func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
+func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []*Var {
 	switch s := x.(type) {
 	case *ast.BinaryExpr:
 		vx := t.EmitExpr(s.X, VarGet)[0]
@@ -284,8 +287,8 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 		vr := t.NewAnonVar(s)
 		vr.EmitDeclare(t)
 		op := t.TranslateOp(s.Op)
-		t.Printf("assign %v = %v %v %v;\n", vr.name, vx.name, op, vy.name)
-		return []Var{vr}
+		t.Printf("assign %v = %v %v %v;\n", vr.NameVer(), vx.NameVer(), op, vy.NameVer())
+		return []*Var{vr}
 	case *ast.Ident:
 		vars := t.IdentVars(s, varOpt)
 		if varOpt == VarNew || varOpt == VarNext {
@@ -297,18 +300,18 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 	case *ast.BasicLit:
 		value, err := strconv.ParseInt(s.Value, 10, 64)
 		t.errcheck(err)
-		vr := t.NewAnonConst(s, value)
-		vr.EmitDeclare(t)
-		return []Var{vr}
+		vr := t.NewAnonConst(s)
+		vr.EmitDeclareConst(t, value)
+		return []*Var{vr}
 	case *ast.CallExpr:
 		ident := s.Fun.(*ast.Ident)
 		fn := t.funcs[ident.Name]
 
-		var inputs []Var
+		var inputs []*Var
 		for _, arg := range s.Args {
 			inputs = append(inputs, t.EmitExpr(arg, VarGet)...)
 		}
-		var outputs []Var
+		var outputs []*Var
 		if len(fn.outputs) == 1 {
 			vr := t.NewAnonVar(s)
 			vr.EmitDeclare(t)
@@ -325,10 +328,10 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 		t.Printf("%v _%v_ (\n", ident.Name, t.varCnt)
 		t.varCnt += 1
 		for i, input := range fn.inputs {
-			t.Printf("  .%v(%v),\n", input, inputs[i].name)
+			t.Printf("  .%v(%v),\n", input, inputs[i].NameVer())
 		}
 		for i, output := range fn.outputs {
-			t.Printf("  .%v(%v),\n", output, outputs[i].name)
+			t.Printf("  .%v(%v),\n", output, outputs[i].NameVer())
 		}
 		t.Printf(");\n")
 		return outputs
@@ -339,21 +342,21 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 		switch underlying.(type) {
 		case *types.Struct:
 			// Return all the struct fields in order (with 0 for defaults)
-			kvs := make(map[string]Var)
+			kvs := make(map[string]*Var)
 			for _, elt := range s.Elts {
 				kv := elt.(*ast.KeyValueExpr)
 				value := t.EmitExpr(kv.Value, VarGet)[0]
 				kvs[kv.Key.(*ast.Ident).Name] = value
 			}
 			st := t.structs[s.Type.(*ast.Ident).Name]
-			var vars []Var
+			var vars []*Var
 			for _, field := range st.fields {
 				vr, ok := kvs[field.name]
 				if ok {
 					vars = append(vars, vr)
 				} else {
 					vr := t.newAnonConst(types.Typ[types.Bool], 0)
-					vr.EmitDeclare(t)
+					vr.EmitDeclareConst(t, 0)
 					vr.signed = field.signed
 					vr.size = field.size
 					vars = append(vars)
@@ -381,8 +384,8 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 	case *ast.KeyValueExpr:
 		vl := t.EmitExpr(s.Key, VarNew)[0]
 		vr := t.EmitExpr(s.Value, VarGet)[0]
-		t.Printf("assign %v = %v;\n", vl.name, vr.name)
-		return []Var{vl}
+		t.Printf("assign %v = %v;\n", vl.NameVer(), vr.NameVer())
+		return []*Var{vl}
 	case *ast.SelectorExpr:
 		vars := t.EmitExpr(s.X, VarGet)
 		_, isStruct := t.typeInfo.TypeOf(s.X).Underlying().(*types.Struct)
@@ -393,7 +396,7 @@ func (t *Translator) EmitExpr(x ast.Expr, varOpt VarOpt) []Var {
 		st := t.structs[typeName]
 		for i, field := range st.fields {
 			if field.name == s.Sel.Name {
-				return []Var{vars[i]}
+				return []*Var{vars[i]}
 			}
 		}
 		panic("unreachable")
@@ -408,9 +411,65 @@ func (t *Translator) EmitReturnStmt(x *ast.ReturnStmt) {
 	for _, r := range x.Results {
 		vs := t.EmitExpr(r, VarGet)
 		for _, v := range vs {
-			t.Printf("assign %v = %v;\n", block.returnVars[i].name, v.name)
+			t.Printf("assign %v = %v;\n", block.returnVars[i].NameVer(), v.NameVer())
 			i += 1
 		}
+	}
+}
+
+func (t *Translator) EmitIfStmt(x *ast.IfStmt) {
+	if x.Init != nil {
+		panic(fmt.Errorf("unsupported If Init"))
+	}
+	cond := t.EmitExpr(x.Cond, VarGet)
+	_ = cond
+
+	t.PushBlock()
+	t.curBlock().branch = true
+	t.curBlock().branchId = 0
+	t.Printf("/* if %v */\n", cond[0].NameVer())
+	t.indentLvl += 1
+	t.EmitBlockStmt(x.Body)
+	t.indentLvl -= 1
+	block := t.PopBlock()
+
+	for _, v := range block.vars {
+		if v.parent != nil {
+			parent := t.GetVar(v.parent.name)
+			parentNext := t.GetVarNextVer(v.parent.name)
+			// TODO: Emit the following expression:
+			// parentNext = (cond & v) | (!cond & parent)
+			panic("WIP")
+		}
+	}
+
+	if x.Else != nil {
+		panic("TODO")
+	}
+}
+
+func (t *Translator) EmitDeclStmt(x *ast.DeclStmt) {
+	switch d := x.Decl.(type) {
+	case *ast.GenDecl:
+		switch d.Tok {
+		case token.VAR:
+			for _, spec := range d.Specs {
+				valueSpec := spec.(*ast.ValueSpec)
+				for i, name := range valueSpec.Names {
+					vrs := t.EmitExpr(valueSpec.Values[i], VarGet)
+					vls := t.VarVars(name.Name, valueSpec.Values[i], VarNew)
+					for j, vl := range vls {
+						vl.EmitDeclare(t)
+						t.Printf("assign %v = %v;\n", vl.NameVer(), vrs[j].name)
+					}
+				}
+			}
+		default:
+			panic(fmt.Errorf("unsupported GenDecl token: %v", d.Tok))
+		}
+
+	default:
+		panic(fmt.Errorf("unsupported Decl: %+T", x))
 	}
 }
 
@@ -425,7 +484,7 @@ func (t *Translator) EmitAssignStmt(x *ast.AssignStmt) {
 				vls := t.EmitExpr(x.Lhs[i], VarNew)
 				i += 1
 				for _, vl := range vls {
-					t.Printf("assign %v = %v;\n", vl.name, results[j].name)
+					t.Printf("assign %v = %v;\n", vl.NameVer(), results[j].NameVer())
 					j += 1
 				}
 			}
@@ -436,7 +495,7 @@ func (t *Translator) EmitAssignStmt(x *ast.AssignStmt) {
 			results := t.EmitExpr(rhs, VarGet)
 			for _, r := range results {
 				vl := t.EmitExpr(x.Lhs[i], VarNext)[0]
-				t.Printf("assign %v = %v;\n", vl.name, r.name)
+				t.Printf("assign %v = %v;\n", vl.NameVer(), r.NameVer())
 				i += 1
 			}
 		}
@@ -454,6 +513,10 @@ func (t *Translator) EmitBlockStmt(x *ast.BlockStmt) {
 			t.EmitReturnStmt(s)
 		case *ast.AssignStmt:
 			t.EmitAssignStmt(s)
+		case *ast.DeclStmt:
+			t.EmitDeclStmt(s)
+		case *ast.IfStmt:
+			t.EmitIfStmt(s)
 		default:
 			panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 		}
@@ -486,6 +549,8 @@ func (t *Translator) TranslateOp(op token.Token) string {
 	case token.SHR:
 		// TODO: Case for signed based on expression type
 		return ">>"
+	case token.EQL:
+		return "=="
 	default:
 		panic(fmt.Errorf("unsupported Token: %v", op))
 	}
@@ -537,7 +602,7 @@ func (t *Translator) EmitFuncDecl(x *ast.FuncDecl) {
 			vars := t.VarVars(name.Name, field.Type, VarNew)
 			// v := t.NewVarExpr(name.Name, field.Type)
 			for _, v := range vars {
-				t.Printf("  input %v %v,\n", typeFmt(v.signed, v.size), v.name)
+				t.Printf("  input %v %v,\n", typeFmt(v.signed, v.size), v.NameVer())
 			}
 		}
 	}
@@ -546,7 +611,7 @@ func (t *Translator) EmitFuncDecl(x *ast.FuncDecl) {
 			panic(fmt.Errorf("unsupported return parameter names"))
 		}
 		v := t.NewVarExpr(fmt.Sprintf("_out%v_", i), field.Type)
-		t.Printf("  output %v %v,\n", typeFmt(v.signed, v.size), v.name)
+		t.Printf("  output %v %v,\n", typeFmt(v.signed, v.size), v.NameVer())
 		block.returnVars = append(block.returnVars, v)
 	}
 	t.Printf(");\n")
@@ -560,13 +625,13 @@ func (t *Translator) EmitFuncDecl(x *ast.FuncDecl) {
 }
 
 func (t *Translator) emit(node ast.Node) {
-	ast.Inspect(node, func(n ast.Node) bool {
+	file := node.(*ast.File)
+	for _, n := range file.Decls {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
 			t.EmitFuncDecl(x)
 		}
-		return true
-	})
+	}
 }
 
 func (t *Translator) Emit(node ast.Node) (err error) {
@@ -595,9 +660,15 @@ type FuncArgs struct {
 	outputs []string
 }
 
+type Field struct {
+	name   string
+	size   int
+	signed bool
+}
+
 type Struct struct {
 	name   string
-	fields []Var
+	fields []Field
 }
 
 func (t *Translator) ParseType(spec ast.Spec) {
@@ -609,7 +680,7 @@ func (t *Translator) ParseType(spec ast.Spec) {
 			for _, f := range ts.Fields.List {
 				signed, size := t.DecodeType(f.Type)
 				for _, name := range f.Names {
-					st.fields = append(st.fields, Var{
+					st.fields = append(st.fields, Field{
 						name:   name.Name,
 						signed: signed,
 						size:   size,
@@ -629,7 +700,8 @@ func (t *Translator) ParseType(spec ast.Spec) {
 // - Find all struct declarations
 // - Find all function declarations
 func (t *Translator) PassInit(node ast.Node) {
-	ast.Inspect(node, func(n ast.Node) bool {
+	file := node.(*ast.File)
+	for _, n := range file.Decls {
 		switch x := n.(type) {
 		case *ast.GenDecl:
 			if x.Tok == token.TYPE {
@@ -638,10 +710,9 @@ func (t *Translator) PassInit(node ast.Node) {
 				}
 			}
 		}
-		return true
-	})
+	}
 
-	ast.Inspect(node, func(n ast.Node) bool {
+	for _, n := range file.Decls {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
 			var inputs []string
@@ -666,14 +737,13 @@ func (t *Translator) PassInit(node ast.Node) {
 			}
 			t.funcs[x.Name.Name] = FuncArgs{inputs: inputs, outputs: outputs}
 		}
-		return true
-	})
+	}
 }
 
 func main() {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "samples/struct.go", nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -689,6 +759,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	spew.Config.DisablePointerAddresses = true
+	spew.Config.SortKeys = true
 
 	t := NewTranslator(os.Stdout, typeInfo)
 	err = t.Emit(node)

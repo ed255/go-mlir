@@ -4,6 +4,7 @@ import (
 	"go/parser"
 	"go/token"
 	"log"
+	"os"
 
 	"github.com/davecgh/go-spew/spew"
 )
@@ -11,7 +12,7 @@ import (
 func main() {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "samples/assign.go", nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}
