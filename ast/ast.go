@@ -8,22 +8,28 @@ type Decl interface {
 	declNode()
 }
 
-func (*FuncDecl) declNode()   {}
-func (*StructDecl) declNode() {}
-func (*ConstDecl) declNode()  {}
-func (*VarDecl) declNode()    {}
-func (*TypeDecl) declNode()   {}
+func (*FuncDecl) declNode() {}
+
+// func (*StructDecl) declNode() {}
+// func (*ConstDecl) declNode()  {}
+func (*VarDecl) declNode() {}
+
+// func (*TypeDecl) declNode()   {}
 
 type Type interface {
 	typeNode()
 }
 
 type PrimType struct {
-	size   int
 	signed bool
+	size   int
 }
 
 func (*PrimType) typeNode() {}
+
+func NewPrimType(signed bool, size int) PrimType {
+	return PrimType{signed: signed, size: size}
+}
 
 type FuncDecl struct {
 	Name string
@@ -41,10 +47,10 @@ type Field struct {
 	Type Type
 }
 
-type StructDecl struct{}
+// type StructDecl struct{}
 
 // TODO
-type ConstDecl struct{}
+// type ConstDecl struct{}
 
 // TODO
 type VarDecl struct {
@@ -53,7 +59,7 @@ type VarDecl struct {
 }
 
 // TODO
-type TypeDecl struct{}
+// type TypeDecl struct{}
 
 type BlockStmt struct {
 	List []Stmt
@@ -65,13 +71,89 @@ type Stmt interface {
 
 func (*DeclStmt) stmtNode()   {}
 func (*AssignStmt) stmtNode() {}
-func (*ReturnStmt) stmtNode() {}
+
+// func (*ReturnStmt) stmtNode() {}
 
 type DeclStmt struct {
 	Decl Decl
 }
 
-type AssignStmt struct {
+type VarRef struct {
+	Name string
 }
 
-type ReturnStmt struct{}
+type AssignStmt struct {
+	Lhs VarRef
+	Rhs Expr
+}
+
+// type ReturnStmt struct {
+// 	Results []Expr
+// }
+
+type Expr interface {
+	exprNode()
+}
+
+func (*BinaryExpr) exprNode() {}
+func (*Ident) exprNode()      {}
+func (*BasicLit) exprNode()   {}
+
+// func (*CallExpr) exprNode()     {}
+// func (*CompositeLit) exprNode() {}
+
+type BinaryExpr struct {
+	X  Expr
+	Op Op
+	Y  Expr
+}
+
+type Ident struct {
+	Name string
+}
+
+// TODO
+type BasicLit struct {
+	Type  Type
+	Value int64
+}
+
+// TODO
+// type CallExpr struct{}
+
+// TODO
+// type CompositeLit struct{}
+
+type Op int
+
+const (
+	ILLEGAL Op = iota
+
+	ADD // +
+	SUB // -
+	MUL // *
+	QUO // /
+	REM // %
+
+	AND // &
+	OR  // |
+	XOR // ^
+	SHL // <<
+	SHR // >>
+)
+
+var ops = [...]string{
+	ILLEGAL: "ILLEGAL",
+
+	ADD: "+",
+	SUB: "-",
+	MUL: "*",
+	QUO: "/",
+	REM: "%",
+
+	AND: "&",
+	OR:  "|",
+	XOR: "^",
+	SHL: "<<",
+	SHR: ">>",
+}

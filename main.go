@@ -479,7 +479,7 @@ func (t *Translator) EmitDeclStmt(x *ast.DeclStmt) {
 		}
 
 	default:
-		panic(fmt.Errorf("unsupported Decl: %+T", x))
+		panic(fmt.Errorf("unsupported Decl: %T", x))
 	}
 }
 
