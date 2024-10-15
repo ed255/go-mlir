@@ -13,22 +13,29 @@ import (
 )
 
 type Var struct {
-	SrcName string
-	BlockId int
+	SrcName  string
+	BlockId  int
+	BranchId int
+	Parent   *Var
 }
 
 func (v *Var) Name() string {
-	if v.BlockId == 0 {
-		return v.SrcName
-	} else {
-		return fmt.Sprintf("%v_b%v", v.SrcName, v.BlockId)
+	s := fmt.Sprintf("%v", v.SrcName)
+	if v.BlockId != 0 {
+		s += fmt.Sprintf("_b%v", v.BlockId)
 	}
+	if v.BranchId != 0 {
+		s += fmt.Sprintf("_c%v", v.BranchId)
+	}
+	return s
 }
 
 type Block struct {
 	id int
 	// Map from src var name to block Var
 	vars map[string]*Var
+	// List of branching vars
+	branchVars []*Var
 	// true if we're in a branch block
 	branch bool
 }
@@ -60,6 +67,9 @@ func (t *Translator) CurBlock() *Block {
 
 func (t *Translator) PushStmt(s ...Stmt) {
 	t.curFuncBody = append(t.curFuncBody, s...)
+}
+func (t *Translator) PushComment(s string) {
+	t.PushStmt(&MetaStmt{Meta: &Comment{Value: s}})
 }
 
 func (t *Translator) PushBlock() {
@@ -147,6 +157,18 @@ func (t *Translator) Op(op token.Token) Op {
 		return SHL
 	case token.SHR:
 		return SHR
+	case token.EQL:
+		return EQL
+	case token.LSS:
+		return LSS
+	case token.GTR:
+		return GTR
+	case token.NEQ:
+		return NEQ
+	case token.LEQ:
+		return LEQ
+	case token.GEQ:
+		return GEQ
 	default:
 		panic(fmt.Errorf("unsupported Token: %v", op))
 	}
@@ -196,9 +218,21 @@ func (t *Translator) Expr(expr ast.Expr) []Expr {
 }
 
 func (t *Translator) VarRef(name string) VarRef {
-	v := t.GetVar(name)
-	return VarRef{
-		Name: v.Name(),
+	depth, v := t.getVar(name)
+	curBlock := t.CurBlock()
+	if curBlock.branch && depth != len(t.blocks)-1 {
+		v2 := t.AddVar(name)
+		v2.BlockId = v.BlockId
+		v2.BranchId = curBlock.id
+		curBlock.branchVars = append(curBlock.branchVars, v2)
+		v2.Parent = v
+		return VarRef{
+			Name: v2.Name(),
+		}
+	} else {
+		return VarRef{
+			Name: v.Name(),
+		}
 	}
 }
 
@@ -211,32 +245,34 @@ func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 	}
 }
 
-func (t *Translator) AddVar(name string) Var {
+func (t *Translator) AddVar(name string) *Var {
 	curBlock := t.CurBlock()
-	if _, ok := curBlock.vars[name]; ok {
-		panic(fmt.Errorf("Var %v already exists in current block", name))
-	}
-	v := Var{
+	v := &Var{
 		SrcName: name,
 		BlockId: curBlock.id,
 	}
 	if _, ok := curBlock.vars[v.Name()]; ok {
 		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
 	}
-	curBlock.vars[name] = &v
+	curBlock.vars[name] = v
 	return v
 }
 
-func (t *Translator) GetVar(name string) *Var {
+func (t *Translator) getVar(name string) (int, *Var) {
 	for i := 0; i < len(t.blocks); i++ {
 		depth := len(t.blocks) - 1 - i
 		block := t.blocks[depth]
 		v, ok := block.vars[name]
 		if ok {
-			return v
+			return depth, v
 		}
 	}
 	panic(fmt.Errorf("Var %v not found in any block", name))
+}
+
+func (t *Translator) GetVar(name string) *Var {
+	_, v := t.getVar(name)
+	return v
 }
 
 func (t *Translator) GenVarDecl(name string, typ Type) *VarDecl {
@@ -361,11 +397,32 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) {
 }
 
 func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
-	// if ifStmt.Init != nil {
-	// 	panic(fmt.Errorf("unsupported IfStmt.Init"))
-	// }
-	// cond := t.Expr(ifStmt.Cond)
+	if ifStmt.Init != nil {
+		panic(fmt.Errorf("unsupported IfStmt.Init"))
+	}
+	cond := t.Expr(ifStmt.Cond)[0]
+	_ = cond
 
+	t.PushBlock()
+	curBlock := t.CurBlock()
+	curBlock.branch = true
+	t.PushComment(fmt.Sprintf("(bid=%v) if %v", curBlock.id, SprintExpr(cond)))
+	t.BlockStmt(ifStmt.Body)
+	block := t.PopBlock()
+	_ = block
+
+	for _, v := range block.branchVars {
+		t.PushStmt(&AssignStmt{
+			Lhs: VarRef{
+				Name: v.Parent.Name(),
+			},
+			Rhs: &CondExpr{
+				Cond:      cond,
+				CaseTrue:  &Ident{Name: v.Name()},
+				CaseFalse: &Ident{Name: v.Parent.Name()},
+			},
+		})
+	}
 }
 
 func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) {

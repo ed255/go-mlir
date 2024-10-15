@@ -47,24 +47,26 @@ func (p *Printer) DeclStmt(ds *DeclStmt) {
 	}
 }
 
-func (p *Printer) ExprNeedsParens(e Expr) bool {
+func printExprNeedsParens(e Expr) bool {
 	switch e.(type) {
 	case *BinaryExpr:
+		return true
+	case *CondExpr:
 		return true
 	default:
 		return false
 	}
 }
 
-func (p *Printer) Expr(o io.Writer, e Expr, parens bool) {
+func printExpr(o io.Writer, e Expr, parens bool) {
 	if parens {
 		fmt.Fprintf(o, "(")
 	}
 	switch e := e.(type) {
 	case *BinaryExpr:
-		p.Expr(o, e.X, p.ExprNeedsParens(e.X))
+		printExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, " %v ", ops[e.Op])
-		p.Expr(o, e.Y, p.ExprNeedsParens(e.Y))
+		printExpr(o, e.Y, printExprNeedsParens(e.Y))
 	case *Ident:
 		fmt.Fprintf(o, "%v", e.Name)
 	case *BasicLit:
@@ -78,10 +80,24 @@ func (p *Printer) Expr(o io.Writer, e Expr, parens bool) {
 		} else {
 			fmt.Fprintf(o, "%v", e.Value)
 		}
+	case *CondExpr:
+		printExpr(o, e.Cond, printExprNeedsParens(e.Cond))
+		fmt.Fprintf(o, " ? ")
+		printExpr(o, e.CaseTrue, printExprNeedsParens(e.CaseTrue))
+		fmt.Fprintf(o, " : ")
+		printExpr(o, e.CaseFalse, printExprNeedsParens(e.CaseFalse))
+	default:
+		panic("TODO")
 	}
 	if parens {
 		fmt.Fprintf(o, ")")
 	}
+}
+
+func SprintExpr(e Expr) string {
+	var exprStr strings.Builder
+	printExpr(&exprStr, e, false)
+	return exprStr.String()
 }
 
 func (p *Printer) MetaStmt(m *MetaStmt) {
@@ -90,12 +106,14 @@ func (p *Printer) MetaStmt(m *MetaStmt) {
 		p.lvl += m.Delta
 	case *Comment:
 		p.Printfln("// %v", m.Value)
+	default:
+		panic("unreachable")
 	}
 }
 
 func (p *Printer) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
-	p.Expr(&exprStr, as.Rhs, false)
+	printExpr(&exprStr, as.Rhs, false)
 	p.Printfln("%v = %v", as.Lhs.Name, exprStr.String())
 }
 

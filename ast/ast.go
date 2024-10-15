@@ -83,6 +83,7 @@ type DeclStmt struct {
 	Decl Decl
 }
 
+// Variable Reference for assignment
 type VarRef struct {
 	Name string
 }
@@ -167,6 +168,13 @@ const (
 	XOR // ^
 	SHL // <<
 	SHR // >>
+
+	EQL // ==
+	LSS // <
+	GTR // >
+	NEQ // !=
+	LEQ // <=
+	GEQ // >=
 )
 
 var ops = [...]string{
@@ -183,4 +191,11 @@ var ops = [...]string{
 	XOR: "^",
 	SHL: "<<",
 	SHR: ">>",
+
+	EQL: "==",
+	LSS: "<",
+	GTR: ">",
+	NEQ: "!=",
+	LEQ: "<=",
+	GEQ: ">=",
 }
