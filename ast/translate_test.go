@@ -13,7 +13,7 @@ func TestTranslate(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	f, err := TranslateFile("../samples/if.go")
+	f, err := TranslateFile("../samples/if3.go")
 	assert.Nil(t, err)
 	// spew.Dump(f)
 	p := NewPrinter(os.Stdout)
