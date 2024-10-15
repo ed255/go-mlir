@@ -37,6 +37,7 @@ type Translator struct {
 	typeInfo    types.Info
 	funcResults []Field
 	blocks      []Block
+	curFuncBody []Stmt
 	lvl         int
 	blockCnt    int
 }
@@ -57,15 +58,25 @@ func (t *Translator) CurBlock() *Block {
 	return &t.blocks[len(t.blocks)-1]
 }
 
+func (t *Translator) PushStmt(s ...Stmt) {
+	t.curFuncBody = append(t.curFuncBody, s...)
+}
+
 func (t *Translator) PushBlock() {
 	id := t.blockCnt
 	t.lvl += 1
+	t.PushStmt(&MetaStmt{
+		Meta: &LvlDelta{Delta: +1},
+	})
 	t.blockCnt += 1
 	t.blocks = append(t.blocks, Block{id: id, vars: make(map[string]*Var)})
 }
 
 func (t *Translator) PopBlock() Block {
 	t.lvl -= 1
+	t.PushStmt(&MetaStmt{
+		Meta: &LvlDelta{Delta: -1},
+	})
 	block := t.blocks[len(t.blocks)-1]
 	t.blocks = t.blocks[:len(t.blocks)-1]
 	return block
@@ -236,8 +247,7 @@ func (t *Translator) GenVarDecl(name string, typ Type) *VarDecl {
 	}
 }
 
-func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
-	var stmts []Stmt
+func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) {
 	switch assignStmt.Tok {
 	case token.DEFINE:
 		i := 0
@@ -255,7 +265,7 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 					Lhs: lhs,
 					Rhs: r,
 				}
-				stmts = append(stmts, &declStmt, &assignStmt)
+				t.PushStmt(&declStmt, &assignStmt)
 				i += 1
 			}
 		}
@@ -268,7 +278,7 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 					Lhs: t.VarRefFromExpr(assignStmt.Lhs[i]),
 					Rhs: r,
 				}
-				stmts = append(stmts, &stmt)
+				t.PushStmt(&stmt)
 				i += 1
 			}
 		}
@@ -277,12 +287,10 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 	default:
 		panic("TODO")
 	}
-	return stmts
 }
 
-func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []AssignStmt {
+func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) {
 	i := 0
-	var stmts []AssignStmt
 	for _, result := range returnStmt.Results {
 		rs := t.Expr(result)
 		for _, r := range rs {
@@ -290,14 +298,12 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []AssignStmt {
 				Lhs: t.VarRef(t.funcResults[i].Name),
 				Rhs: r,
 			}
-			stmts = append(stmts, stmt)
+			t.PushStmt(&stmt)
 		}
 	}
-	return stmts
 }
 
-func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
-	var stmts []Stmt
+func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) {
 	var lhss []string
 	for _, name := range valueSpec.Names {
 		lhs := name.Name
@@ -312,7 +318,7 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
 					t.TypeFromExpr(valueSpec.Type),
 				),
 			}
-			stmts = append(stmts, &declStmt)
+			t.PushStmt(&declStmt)
 		}
 	} else {
 		i := 0
@@ -329,23 +335,21 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
 					Lhs: t.VarRef(lhss[i]),
 					Rhs: r,
 				}
-				stmts = append(stmts, &declStmt, &assignStmt)
+				t.PushStmt(&declStmt, &assignStmt)
 				i += 1
 			}
 		}
 	}
-	return stmts
 }
 
-func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
-	var stmts []Stmt
+func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) {
 	switch declStmt := declStmt.Decl.(type) {
 	case *ast.GenDecl:
 		switch declStmt.Tok {
 		case token.VAR:
 			for _, spec := range declStmt.Specs {
 				valueSpec := spec.(*ast.ValueSpec)
-				stmts = append(stmts, t.ValueSpec(valueSpec)...)
+				t.ValueSpec(valueSpec)
 			}
 		default:
 			panic(fmt.Errorf("unsupported GenDecl token: %v", declStmt.Tok))
@@ -354,41 +358,35 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
 	default:
 		panic(fmt.Errorf("unsupported Decl: %T", declStmt))
 	}
-	return stmts
 }
 
-func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) []Stmt {
-	list := []Stmt{&MetaStmt{
-		Meta: &LvlDelta{Delta: +1},
-	}}
+func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
+	// if ifStmt.Init != nil {
+	// 	panic(fmt.Errorf("unsupported IfStmt.Init"))
+	// }
+	// cond := t.Expr(ifStmt.Cond)
+
+}
+
+func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) {
 	for _, stmt := range blockStmt.List {
 		switch stmt := stmt.(type) {
 		case *ast.ReturnStmt:
-			stmts := t.ReturnStmt(stmt)
-			for _, stmt := range stmts {
-				list = append(list, &stmt)
-			}
+			t.ReturnStmt(stmt)
 		case *ast.AssignStmt:
-			list = append(list, t.AssignStmt(stmt)...)
+			t.AssignStmt(stmt)
 		case *ast.DeclStmt:
-			list = append(list, t.DeclStmt(stmt)...)
-		// TODO
-		// case *ast.IfStmt:
-		// 	t.IfStmt(s)
+			t.DeclStmt(stmt)
+		case *ast.IfStmt:
+			t.IfStmt(stmt)
 		case *ast.BlockStmt:
 			t.PushBlock()
-			block := t.BlockStmt(stmt)
-			list = append(list, block...)
+			t.BlockStmt(stmt)
 			t.PopBlock()
 		default:
 			panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 		}
 	}
-	list = append(list, &MetaStmt{
-		Meta: &LvlDelta{Delta: -1},
-	})
-
-	return list
 }
 
 func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
@@ -428,13 +426,17 @@ func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
 	}
 	t.funcResults = results
 
+	t.curFuncBody = []Stmt{}
+	t.PushBlock()
+	t.BlockStmt(funcDecl.Body)
+	t.PopBlock()
 	return &FuncDecl{
 		Name: funcDecl.Name.Name,
 		Type: FuncType{
 			Params:  params,
 			Results: results,
 		},
-		Body: t.BlockStmt(funcDecl.Body),
+		Body: t.curFuncBody,
 	}
 }
 

@@ -101,11 +101,18 @@ type Expr interface {
 }
 
 func (*BinaryExpr) exprNode() {}
+func (*CondExpr) exprNode()   {}
 func (*Ident) exprNode()      {}
 func (*BasicLit) exprNode()   {}
 
 // func (*CallExpr) exprNode()     {}
 // func (*CompositeLit) exprNode() {}
+
+type CondExpr struct {
+	Cond      Expr
+	CaseTrue  Expr
+	CaseFalse Expr
+}
 
 type BinaryExpr struct {
 	X  Expr
