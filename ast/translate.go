@@ -262,17 +262,27 @@ func (t *Translator) VarRef(name string) VarRef {
 		var child *Var
 		// We build a linked list from Ancestor to the deepest
 		// branchBlock, chained by the Parent field
-		for _, block := range branchBlocks {
-			child = block.AddVar(name, v.Type)
+		for i, block := range branchBlocks {
+			isLast := i == len(branchBlocks)-1
+			// Now we only add the var we're about to use.  The
+			// other vars in the chain will be added when emitting
+			// their CondExpr.
+			if isLast {
+				child = block.AddVar(name, v.Type)
+			} else {
+				child = &Var{}
+			}
 			*child = *ancestor
 			child.BranchId = block.id
 			child.Parent = parent
 			child.Ancestor = ancestor
-			t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
-			t.PushStmt(&AssignStmt{
-				Lhs: VarRef{Name: child.Name()},
-				Rhs: &Ident{Name: ancestor.Name()},
-			})
+			if isLast {
+				t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
+			}
+			// t.PushStmt(&AssignStmt{
+			// 	Lhs: VarRef{Name: child.Name()},
+			// 	Rhs: &Ident{Name: ancestor.Name()},
+			// })
 			block.branchVars = append(block.branchVars, child)
 			parent = child
 		}
@@ -515,21 +525,21 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 	for _, pair := range branchVars {
 		trueCaseVar := pair[0]
 		falseCaseVar := pair[1]
+		// Find the parent from either true/false case
 		v := trueCaseVar
 		if v == nil {
 			v = falseCaseVar
 		}
 		ancestor := v.Ancestor
 		parent := v.Parent
-		// fmt.Printf("DBG parent: %+#v\n", parent)
-		// If parent var was not declared in this block, propagate a
-		// parent copy to the current block and use it instead of the
-		// actual parent
-		// NOTE: I'm not sure this is enough.  What happens when we propagate to current block but current block is not branching?  We won't process the branchVars...
-		// if parent.BlockId != curBlock.id {
-		// 	curBlock.branchVars = append(curBlock.branchVars, parent)
-		// }
-		// t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
+
+		// We haven't reached the ancestor yet, we need to add and
+		// declare the var
+		if parent.Parent != nil {
+			parentVar := curBlock.AddVar(parent.SrcName, parent.Type)
+			*parentVar = *parent
+			t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
+		}
 
 		// oldParent := *parent
 		caseTrueName := ancestor.Name()
