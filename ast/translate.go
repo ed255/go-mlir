@@ -9,6 +9,7 @@ import (
 	"go/types"
 	"log"
 	"runtime/debug"
+	"slices"
 	"strconv"
 )
 
@@ -17,8 +18,13 @@ type Var struct {
 	BlockId  int
 	BranchId int
 	Type     Type
-	// Variable from which this Var is branching
+	// Variable from which this Var is branching.  This is an intermediate
+	// branch variable that needs updating after the branchin block is
+	// completed.
 	Parent *Var
+	// Variable from which this Var branch initiates.  This is the value
+	// that the original variable takes if the branch doesn't apply.
+	Ancestor *Var
 }
 
 func (v *Var) Name() string {
@@ -40,6 +46,19 @@ type Block struct {
 	branchVars []*Var
 	// true if we're in a branch block
 	branch bool
+}
+
+func (b *Block) AddVar(name string, typ Type) *Var {
+	v := &Var{
+		SrcName: name,
+		BlockId: b.id,
+		Type:    typ,
+	}
+	if _, ok := b.vars[v.Name()]; ok {
+		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
+	}
+	b.vars[name] = v
+	return v
 }
 
 type Translator struct {
@@ -121,7 +140,7 @@ func (t *Translator) TypeFromExpr(e ast.Expr) Type {
 		return &Int16
 	} else if types.Identical(typ, types.Typ[types.Int32]) {
 		return &Int32
-	} else if types.Identical(typ, types.Typ[types.Int64]) {
+	} else if types.Identical(typ, types.Typ[types.Int64]) || types.Identical(typ, types.Typ[types.UntypedInt]) {
 		return &Int64
 	} else if types.Identical(typ, types.Typ[types.Uint]) {
 		return &Uint
@@ -236,17 +255,26 @@ func (t *Translator) Expr(expr ast.Expr) []Expr {
 }
 
 func (t *Translator) VarRef(name string) VarRef {
-	depth, branchBlock, v := t.getVar(name)
-	curBlock := t.CurBlock()
-	if branchBlock != nil && depth != len(t.blocks)-1 {
-		v2 := t.AddVar(name, v.Type)
-		*v2 = *v
-		v2.BranchId = curBlock.id
-		v2.Parent = v
-		t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: v2.Name(), Type: v2.Type}})
-		branchBlock.branchVars = append(branchBlock.branchVars, v2)
+	depth, branchBlocks, v := t.getVar(name)
+	if len(branchBlocks) > 0 && depth != len(t.blocks)-1 {
+		ancestor := v
+		parent := ancestor
+		var child Var
+		// We build a linked list from Ancestor to the deepest
+		// branchBlock, chained by the Parent field
+		for _, block := range branchBlocks {
+			// child = block.AddVar(name, v.Type)
+			child = *ancestor
+			child.BranchId = block.id
+			child.Parent = parent
+			child.Ancestor = ancestor
+			t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
+			block.branchVars = append(block.branchVars, child)
+			parent = &child
+		}
+		lastChild := branchBlocks[len(branchBlocks)-1].AddVar(child.SrcName, child.Type)
 		return VarRef{
-			Name: v2.Name(),
+			Name: lastChild.Name(),
 		}
 	} else {
 		return VarRef{
@@ -264,33 +292,40 @@ func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 	}
 }
 
-func (t *Translator) AddVar(name string, typ Type) *Var {
-	curBlock := t.CurBlock()
-	v := &Var{
-		SrcName: name,
-		BlockId: curBlock.id,
-		Type:    typ,
-	}
-	if _, ok := curBlock.vars[v.Name()]; ok {
-		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
-	}
-	curBlock.vars[name] = v
-	return v
-}
+// func (t *Translator) AddVar(name string, typ Type) *Var {
+// 	t.CurBlock
+// 	curBlock := t.CurBlock()
+// 	v := &Var{
+// 		SrcName: name,
+// 		BlockId: curBlock.id,
+// 		Type:    typ,
+// 	}
+// 	if _, ok := curBlock.vars[v.Name()]; ok {
+// 		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
+// 	}
+// 	curBlock.vars[name] = v
+// 	return v
+// }
 
-// getVar returns depth, deepest branching block in the path (or nil if none),
-// var
-func (t *Translator) getVar(name string) (int, *Block, *Var) {
-	var branchBlock *Block
+// getVar returns:
+// - depth (block depth were var is declared)
+// - list of branching blocks in the path (from shallow to deepest, excluding
+// the block where the var is defined)
+// - var
+func (t *Translator) getVar(name string) (int, []*Block, *Var) {
+	var branchBlocks []*Block
 	for i := 0; i < len(t.blocks); i++ {
 		depth := len(t.blocks) - 1 - i
 		block := &t.blocks[depth]
-		if branchBlock == nil && block.branch == true {
-			branchBlock = block
-		}
 		v, ok := block.vars[name]
+		// collect branching blocks in the path, excluding the block
+		// where the var is defined
+		if !ok && block.branch == true {
+			branchBlocks = append(branchBlocks, block)
+		}
 		if ok {
-			return depth, branchBlock, v
+			slices.Reverse(branchBlocks)
+			return depth, branchBlocks, v
 		}
 	}
 	panic(fmt.Errorf("Var %v not found in any block", name))
@@ -302,7 +337,7 @@ func (t *Translator) GetVar(name string) *Var {
 }
 
 func (t *Translator) GenVarDecl(name string, typ Type) *VarDecl {
-	v := t.AddVar(name, typ)
+	v := t.CurBlock().AddVar(name, typ)
 	return &VarDecl{
 		Name: v.Name(),
 		Type: typ,
@@ -479,20 +514,21 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 		if v == nil {
 			v = falseCaseVar
 		}
+		ancestor := v.Ancestor
 		parent := v.Parent
-		fmt.Printf("DBG parent: %+#v\n", parent)
+		// fmt.Printf("DBG parent: %+#v\n", parent)
 		// If parent var was not declared in this block, propagate a
 		// parent copy to the current block and use it instead of the
 		// actual parent
 		// NOTE: I'm not sure this is enough.  What happens when we propagate to current block but current block is not branching?  We won't process the branchVars...
-		if parent.BlockId != curBlock.id {
-			curBlock.branchVars = append(curBlock.branchVars, parent)
-		}
+		// if parent.BlockId != curBlock.id {
+		// 	curBlock.branchVars = append(curBlock.branchVars, parent)
+		// }
 		// t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
 
-		oldParent := *parent
-		caseTrueName := oldParent.Name()
-		caseFalseName := oldParent.Name()
+		// oldParent := *parent
+		caseTrueName := ancestor.Name()
+		caseFalseName := ancestor.Name()
 		if trueCaseVar != nil {
 			caseTrueName = trueCaseVar.Name()
 		}
@@ -544,7 +580,7 @@ func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
 	for _, field := range funcDecl.Type.Params.List {
 		for _, name := range field.Names {
 			typ := t.TypeFromExpr(field.Type)
-			v := t.AddVar(name.Name, typ)
+			v := t.CurBlock().AddVar(name.Name, typ)
 			param := Field{Name: v.Name(), Type: typ}
 			params = append(params, param)
 		}
@@ -554,13 +590,13 @@ func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
 	for i, field := range funcDecl.Type.Results.List {
 		if len(field.Names) == 0 {
 			typ := t.TypeFromExpr(field.Type)
-			v := t.AddVar(fmt.Sprintf("_out%v", i), typ)
+			v := t.CurBlock().AddVar(fmt.Sprintf("_out%v", i), typ)
 			result := Field{Name: v.Name(), Type: typ}
 			results = append(results, result)
 		} else {
 			for _, name := range field.Names {
 				typ := t.TypeFromExpr(field.Type)
-				v := t.AddVar(name.Name, typ)
+				v := t.CurBlock().AddVar(name.Name, typ)
 				result := Field{Name: v.Name(), Type: typ}
 				results = append(results, result)
 			}
