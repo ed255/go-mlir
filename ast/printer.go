@@ -6,15 +6,21 @@ import (
 	"strings"
 )
 
-type Printer struct {
-	lvl int
-	out io.Writer
+type PrinterOpts struct {
+	GoCompat bool
 }
 
-func NewPrinter(out io.Writer) Printer {
+type Printer struct {
+	lvl  int
+	out  io.Writer
+	opts PrinterOpts
+}
+
+func NewPrinter(out io.Writer, opts PrinterOpts) Printer {
 	return Printer{
-		lvl: 0,
-		out: out,
+		lvl:  0,
+		out:  out,
+		opts: opts,
 	}
 }
 
@@ -56,6 +62,16 @@ func printExprNeedsParens(e Expr) bool {
 	default:
 		return false
 	}
+}
+
+func printCondExprGo(o io.Writer, ce *CondExpr, lhs string) {
+	fmt.Fprintf(o, "if ")
+	printExpr(o, ce.Cond, false)
+	fmt.Fprintf(o, " { %v = ", lhs)
+	printExpr(o, ce.CaseTrue, false)
+	fmt.Fprintf(o, " } else { %v = ", lhs)
+	printExpr(o, ce.CaseFalse, false)
+	fmt.Fprintf(o, " }")
 }
 
 func printExpr(o io.Writer, e Expr, parens bool) {
@@ -113,17 +129,25 @@ func (p *Printer) MetaStmt(m *MetaStmt) {
 
 func (p *Printer) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
-	printExpr(&exprStr, as.Rhs, false)
-	p.Printfln("%v = %v", as.Lhs.Name, exprStr.String())
+	condExpr, ok := as.Rhs.(*CondExpr)
+	if ok && p.opts.GoCompat {
+		// go friendly ternary operator
+		printCondExprGo(&exprStr, condExpr, as.Lhs.Name)
+		p.Printfln("%v", exprStr.String())
+	} else {
+		printExpr(&exprStr, as.Rhs, false)
+		p.Printfln("%v = %v", as.Lhs.Name, exprStr.String())
+	}
 }
 
 func (p *Printer) FuncDecl(fd *FuncDecl) {
 	p.Printfln("func %v (", fd.Name)
 	for _, param := range fd.Type.Params {
-		p.Printfln("  in %v %v,", param.Name, p.Type(param.Type))
+		p.Printfln("  %v %v,", param.Name, p.Type(param.Type))
 	}
+	p.Printfln(") (")
 	for _, result := range fd.Type.Results {
-		p.Printfln("  out %v %v,", result.Name, p.Type(result.Type))
+		p.Printfln("  %v %v,", result.Name, p.Type(result.Type))
 	}
 	p.Printfln(") {")
 	for _, s := range fd.Body {
@@ -138,6 +162,7 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 			panic("TODO")
 		}
 	}
+	p.Printfln("  return")
 	p.Printfln("}")
 }
 
@@ -149,9 +174,9 @@ func (p *Printer) Type(t Type) string {
 		} else {
 			s := ""
 			if t.signed {
-				s += "i"
+				s += "int"
 			} else {
-				s += "u"
+				s += "uint"
 			}
 			s += fmt.Sprintf("%v", t.size)
 			return s

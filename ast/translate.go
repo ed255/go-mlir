@@ -259,22 +259,27 @@ func (t *Translator) VarRef(name string) VarRef {
 	if len(branchBlocks) > 0 && depth != len(t.blocks)-1 {
 		ancestor := v
 		parent := ancestor
-		var child Var
+		var child *Var
 		// We build a linked list from Ancestor to the deepest
 		// branchBlock, chained by the Parent field
 		for _, block := range branchBlocks {
-			// child = block.AddVar(name, v.Type)
-			child = *ancestor
+			child = block.AddVar(name, v.Type)
+			*child = *ancestor
 			child.BranchId = block.id
 			child.Parent = parent
 			child.Ancestor = ancestor
 			t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
+			t.PushStmt(&AssignStmt{
+				Lhs: VarRef{Name: child.Name()},
+				Rhs: &Ident{Name: ancestor.Name()},
+			})
 			block.branchVars = append(block.branchVars, child)
-			parent = &child
+			parent = child
 		}
-		lastChild := branchBlocks[len(branchBlocks)-1].AddVar(child.SrcName, child.Type)
+		// lastChild := branchBlocks[len(branchBlocks)-1].AddVar(child.SrcName, child.Type)
+		// *lastChild = child
 		return VarRef{
-			Name: lastChild.Name(),
+			Name: child.Name(),
 		}
 	} else {
 		return VarRef{

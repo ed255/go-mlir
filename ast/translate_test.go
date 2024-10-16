@@ -16,6 +16,6 @@ func TestTranslate(t *testing.T) {
 	f, err := TranslateFile("../samples/if3.go")
 	assert.Nil(t, err)
 	// spew.Dump(f)
-	p := NewPrinter(os.Stdout)
+	p := NewPrinter(os.Stdout, PrinterOpts{GoCompat: true})
 	p.File(&f)
 }
