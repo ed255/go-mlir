@@ -13,20 +13,16 @@ import (
 )
 
 type Var struct {
-	SrcName       string
-	BlockId       int
-	BranchId      int
-	Version       int
-	Type          Type
-	Parent        *Var
-	ParentVersion int
+	SrcName  string
+	BlockId  int
+	BranchId int
+	Type     Type
+	// Variable from which this Var is branching
+	Parent *Var
 }
 
 func (v *Var) Name() string {
 	s := fmt.Sprintf("%v", v.SrcName)
-	if v.Version != 0 {
-		s += fmt.Sprintf("_v%v", v.Version)
-	}
 	if v.BlockId != 0 {
 		s += fmt.Sprintf("_b%v", v.BlockId)
 	}
@@ -240,16 +236,15 @@ func (t *Translator) Expr(expr ast.Expr) []Expr {
 }
 
 func (t *Translator) VarRef(name string) VarRef {
-	depth, v := t.getVar(name)
+	depth, branchBlock, v := t.getVar(name)
 	curBlock := t.CurBlock()
-	if curBlock.branch && depth != len(t.blocks)-1 {
+	if branchBlock != nil && depth != len(t.blocks)-1 {
 		v2 := t.AddVar(name, v.Type)
 		*v2 = *v
 		v2.BranchId = curBlock.id
 		v2.Parent = v
-		v2.ParentVersion = v.Version
 		t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: v2.Name(), Type: v2.Type}})
-		curBlock.branchVars = append(curBlock.branchVars, v2)
+		branchBlock.branchVars = append(branchBlock.branchVars, v2)
 		return VarRef{
 			Name: v2.Name(),
 		}
@@ -283,20 +278,26 @@ func (t *Translator) AddVar(name string, typ Type) *Var {
 	return v
 }
 
-func (t *Translator) getVar(name string) (int, *Var) {
+// getVar returns depth, deepest branching block in the path (or nil if none),
+// var
+func (t *Translator) getVar(name string) (int, *Block, *Var) {
+	var branchBlock *Block
 	for i := 0; i < len(t.blocks); i++ {
 		depth := len(t.blocks) - 1 - i
-		block := t.blocks[depth]
+		block := &t.blocks[depth]
+		if branchBlock == nil && block.branch == true {
+			branchBlock = block
+		}
 		v, ok := block.vars[name]
 		if ok {
-			return depth, v
+			return depth, branchBlock, v
 		}
 	}
 	panic(fmt.Errorf("Var %v not found in any block", name))
 }
 
 func (t *Translator) GetVar(name string) *Var {
-	_, v := t.getVar(name)
+	_, _, v := t.getVar(name)
 	return v
 }
 
@@ -435,7 +436,7 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 	curBlock.branch = true
 	t.PushComment(fmt.Sprintf("(bid=%v) if %v", curBlock.id, condStr))
 	t.BlockStmt(ifStmt.Body)
-	trueBlock := t.PopBlock()
+	trueBlockBranchVars := t.PopBlock().branchVars
 
 	// False case
 	var falseBlockBranchVars []*Var
@@ -452,13 +453,12 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 		default:
 			panic("unreachable")
 		}
-		falseBlock := t.PopBlock()
-		falseBlockBranchVars = falseBlock.branchVars
+		falseBlockBranchVars = t.PopBlock().branchVars
 	}
 
-	// Collect vars that have branched in the true and false case
+	// Arrange vars that have branched in the true and false case by name
 	branchVars := make(map[string][2]*Var)
-	for _, v := range trueBlock.branchVars {
+	for _, v := range trueBlockBranchVars {
 		branchVars[v.SrcName] = [2]*Var{v, nil}
 	}
 	for _, v := range falseBlockBranchVars {
@@ -480,17 +480,17 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 			v = falseCaseVar
 		}
 		parent := v.Parent
-		parent.Version += 1
+		fmt.Printf("DBG parent: %+#v\n", parent)
 		// If parent var was not declared in this block, propagate a
 		// parent copy to the current block and use it instead of the
 		// actual parent
+		// NOTE: I'm not sure this is enough.  What happens when we propagate to current block but current block is not branching?  We won't process the branchVars...
 		if parent.BlockId != curBlock.id {
 			curBlock.branchVars = append(curBlock.branchVars, parent)
 		}
-		t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
+		// t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
 
 		oldParent := *parent
-		oldParent.Version = v.ParentVersion
 		caseTrueName := oldParent.Name()
 		caseFalseName := oldParent.Name()
 		if trueCaseVar != nil {
