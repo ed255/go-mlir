@@ -410,6 +410,7 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) {
 				Lhs: t.VarRef(t.funcResults[i].Name),
 				Rhs: r,
 			}
+			i += 1
 			t.PushStmt(&stmt)
 		}
 	}
@@ -672,10 +673,10 @@ func Translate(node ast.Node, typeInfo types.Info) (f File, err error) {
 	return f, nil
 }
 
-func TranslateFile(filePath string) (f File, err error) {
+func TranslateFile(filePath string, src any) (f File, err error) {
 	// parse file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments|parser.SkipObjectResolution)
+	node, err := parser.ParseFile(fset, filePath, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		log.Fatal(err)
 	}

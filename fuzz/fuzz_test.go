@@ -6,59 +6,84 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func entrypoint_if3(
-	a uint8,
-) uint8 {
-	var x uint8 = 0
-	if a/2 == 0 {
-		// x = x + b
-		if a/3 == 0 {
-			x = x + 2
-		} else {
-			x = x + 3
-		}
-	}
-	return x
+func FuzzAdd2(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0 := entrypoint_add2(a, b)
+		out0_t1 := entrypoint_add2_t1(a, b)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
 }
 
-func entrypoint_if3_t1(
-	a uint8,
-) (
-	_out0 uint8,
-) {
-	var x_b1 uint8
-	x_b1 = 0
-	var _0_b1 bool
-	_0_b1 = (a / 2) == 0
-	// (bid=2) if (a / 2) == 0
-	var _1_b2 bool
-	_1_b2 = (a / 3) == 0
-	// (bid=3) if (a / 3) == 0
-	var x_b1_c3 uint8
-	x_b1_c3 = x_b1 + 2
-	// (bid=4) else
-	var x_b1_c4 uint8
-	x_b1_c4 = x_b1 + 3
-	var x_b1_c2 uint8
-	if _1_b2 {
-		x_b1_c2 = x_b1_c3
-	} else {
-		x_b1_c2 = x_b1_c4
-	}
-	if _0_b1 {
-		x_b1 = x_b1_c2
-	} else {
-		x_b1 = x_b1
-	}
-	_out0 = x_b1
-	return
+func FuzzAdd(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0 := entrypoint_add(a, b)
+		out0_t1 := entrypoint_add_t1(a, b)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
+}
+
+func FuzzAssign(f *testing.F) {
+	f.Add(uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8) {
+		out0 := entrypoint_assign(a)
+		out0_t1 := entrypoint_assign_t1(a)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
+}
+
+func FuzzIf2(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0 := entrypoint_if2(a, b)
+		out0_t1 := entrypoint_if2_t1(a, b)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
 }
 
 func FuzzIf3(f *testing.F) {
 	f.Add(uint8(128))
 	f.Fuzz(func(t *testing.T, a uint8) {
-		out := entrypoint_if3(a)
-		out_t1 := entrypoint_if3_t1(a)
-		assert.Equal(t, out, out_t1)
+		out0 := entrypoint_if3(a)
+		out0_t1 := entrypoint_if3_t1(a)
+		
+		assert.Equal(t, out0, out0_t1)
 	})
 }
+
+func FuzzIf(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0 := entrypoint_if(a, b)
+		out0_t1 := entrypoint_if_t1(a, b)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
+}
+
+func FuzzNest(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0, out1 := entrypoint_nest(a, b)
+		out0_t1, out1_t1 := entrypoint_nest_t1(a, b)
+		
+		assert.Equal(t, out0, out0_t1)
+		assert.Equal(t, out1, out1_t1)
+	})
+}
+
+func FuzzReturn(f *testing.F) {
+	f.Add(uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8) {
+		out0 := entrypoint_return(a)
+		out0_t1 := entrypoint_return_t1(a)
+		
+		assert.Equal(t, out0, out0_t1)
+	})
+}
+
