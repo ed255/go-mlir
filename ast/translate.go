@@ -10,6 +10,7 @@ import (
 	"log"
 	"runtime/debug"
 	"slices"
+	"sort"
 	"strconv"
 )
 
@@ -279,15 +280,9 @@ func (t *Translator) VarRef(name string) VarRef {
 			if isLast {
 				t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
 			}
-			// t.PushStmt(&AssignStmt{
-			// 	Lhs: VarRef{Name: child.Name()},
-			// 	Rhs: &Ident{Name: ancestor.Name()},
-			// })
 			block.branchVars = append(block.branchVars, child)
 			parent = child
 		}
-		// lastChild := branchBlocks[len(branchBlocks)-1].AddVar(child.SrcName, child.Type)
-		// *lastChild = child
 		return VarRef{
 			Name: child.Name(),
 		}
@@ -306,21 +301,6 @@ func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 		panic(fmt.Errorf("unsupported Expr for VarRef: %+T", expr))
 	}
 }
-
-// func (t *Translator) AddVar(name string, typ Type) *Var {
-// 	t.CurBlock
-// 	curBlock := t.CurBlock()
-// 	v := &Var{
-// 		SrcName: name,
-// 		BlockId: curBlock.id,
-// 		Type:    typ,
-// 	}
-// 	if _, ok := curBlock.vars[v.Name()]; ok {
-// 		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
-// 	}
-// 	curBlock.vars[name] = v
-// 	return v
-// }
 
 // getVar returns:
 // - depth (block depth were var is declared)
@@ -523,7 +503,13 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
 	}
 
 	curBlock = t.CurBlock()
-	for _, pair := range branchVars {
+	keys := make([]string, 0, len(branchVars))
+	for k := range branchVars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		pair := branchVars[key]
 		trueCaseVar := pair[0]
 		falseCaseVar := pair[1]
 		// Find the parent from either true/false case
