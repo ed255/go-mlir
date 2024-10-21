@@ -109,6 +109,28 @@ func printExpr(o io.Writer, e Expr, parens bool) {
 		printExpr(o, e.CaseTrue, printExprNeedsParens(e.CaseTrue))
 		fmt.Fprintf(o, " : ")
 		printExpr(o, e.CaseFalse, printExprNeedsParens(e.CaseFalse))
+	case *CallExpr:
+		fmt.Fprintf(o, "%v(", e.Fun)
+		for i, arg := range e.Args {
+			if i != 0 {
+				fmt.Fprintf(o, ", ")
+			}
+			printExpr(o, arg, false)
+		}
+		fmt.Fprintf(o, ")")
+	case *StructLit:
+		fmt.Fprintf(o, "%v{", e.Name)
+		for i, kv := range e.KeyValues {
+			if i != 0 {
+				fmt.Fprintf(o, ", ")
+			}
+			fmt.Fprintf(o, "%v: ", kv.Key)
+			printExpr(o, kv.Value, false)
+		}
+		fmt.Fprintf(o, "}")
+	case *SelectorExpr:
+		printExpr(o, e.X, printExprNeedsParens(e.X))
+		fmt.Fprintf(o, ".%v", e.Sel)
 	default:
 		panic("TODO")
 	}
@@ -156,16 +178,35 @@ func (p *Printer) IfStmt(is *IfStmt) {
 	}
 }
 
+func SprintVarRef(vr *VarRef) string {
+	str := vr.Name
+	parent := vr.Parent
+	for parent != nil {
+		str = parent.Name + "." + str
+		parent = parent.Parent
+	}
+	return str
+}
+
 func (p *Printer) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
 	condExpr, ok := as.Rhs.(*CondExpr)
 	if ok && p.opts.GoCompat {
+		if len(as.Lhs) != 1 {
+			panic("unreachable")
+		}
 		// go friendly ternary operator
-		printCondExprGo(&exprStr, condExpr, as.Lhs.Name)
+		printCondExprGo(&exprStr, condExpr, SprintVarRef(&as.Lhs[0]))
 		p.Printfln("%v", exprStr.String())
 	} else {
 		printExpr(&exprStr, as.Rhs, false)
-		p.Printfln("%v = %v", as.Lhs.Name, exprStr.String())
+		for i, l := range as.Lhs {
+			if i != 0 {
+				p.Printf(", ")
+			}
+			p.Printf("%v", SprintVarRef(&l))
+		}
+		p.Printfln(" = %v", exprStr.String())
 	}
 }
 
@@ -206,6 +247,7 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 	p.Printfln(") {")
 	p.BlockStmt(fd.Body)
 	p.Printfln("}")
+	p.Printfln("")
 }
 
 func (p *Printer) Type(t Type) string {
@@ -223,6 +265,8 @@ func (p *Printer) Type(t Type) string {
 			s += fmt.Sprintf("%v", t.size)
 			return s
 		}
+	case *StructDecl:
+		return t.Name
 	default:
 		panic("TODO")
 	}
@@ -239,8 +283,8 @@ func (p *Printer) Decl(d Decl) {
 	}
 }
 
-func (p *Printer) File(f *File) {
-	for _, d := range f.Decls {
-		p.Decl(d)
+func (p *Printer) Package(pkg *Package) {
+	for _, f := range pkg.Funcs {
+		p.FuncDecl(f)
 	}
 }

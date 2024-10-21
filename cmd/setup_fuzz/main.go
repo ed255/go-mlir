@@ -17,19 +17,21 @@ import (
 type FuzzTestData struct {
 	NameCapital string
 	Name        string
+	PassCapital string
+	Pass        string
 	InputSample string
 	InputSpec   string
 	Input       string
 	OutputLen   int
 }
 
-const tmplFuzzTestStr = `func Fuzz{{.NameCapital}}(f *testing.F) {
+const tmplFuzzTestStr = `func Fuzz{{.PassCapital}}{{.NameCapital}}(f *testing.F) {
 	f.Add({{.InputSample}})
 	f.Fuzz(func(t *testing.T, {{.InputSpec}}) {
 		{{out .OutputLen ""}} := entrypoint_{{.Name}}({{.Input}})
-		{{out .OutputLen "_t1"}} := entrypoint_{{.Name}}_t1({{.Input}})
-		{{range $i, $id := count .OutputLen }}
-		assert.Equal(t, out{{$id}}, out{{$id}}_t1){{end}}
+		{{out .OutputLen (print "_" .Pass)}} := entrypoint_{{.Name}}_{{.Pass}}({{.Input}})
+		{{range $i, $id := (count .OutputLen) }}
+		assert.Equal(t, out{{$id}}, out{{$id}}_{{$.Pass}}){{end}}
 	})
 }
 `
@@ -56,12 +58,31 @@ func suffixGlobals(content string, suffix string) string {
 	}
 	return content
 }
+
+type File struct {
+	Path string
+	*os.File
+}
+
 func main() {
 	const pathSamples = "./samples"
-	const pathFuzzTest = "./fuzz/fuzz_test.go"
-	const pathFuzzSamples = "./fuzz/samples.go"
-	const pathFuzzSamplesT1 = "./fuzz/samples_t1.go"
-	const pathFuzzScript = "./fuzz.sh"
+
+	fuzzTest := File{Path: "./fuzz/fuzz_test.go"}
+	fuzzSamples := File{Path: "./fuzz/samples.go"}
+	fuzzSamplesTranslate := File{Path: "./fuzz/samples_translate.go"}
+	fuzzScript := File{Path: "./fuzz.sh"}
+
+	var err error
+	for _, file := range []*File{&fuzzTest, &fuzzSamples, &fuzzSamplesTranslate} {
+		file.File, err = os.OpenFile(file.Path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		errcheck(err)
+		defer file.File.Close()
+		file.File.WriteString("package fuzz\n\n")
+	}
+
+	fuzzScript.File, err = os.OpenFile(fuzzScript.Path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	errcheck(err)
+	defer fuzzScript.File.Close()
 
 	tmplFuzzTest, err := template.New("test").Funcs(map[string]any{
 		"count": func(n int) []int {
@@ -84,24 +105,7 @@ func main() {
 	}).Parse(tmplFuzzTestStr)
 	errcheck(err)
 
-	fileFuzzTest, err := os.OpenFile(pathFuzzTest, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	errcheck(err)
-	defer fileFuzzTest.Close()
-	fileFuzzSamples, err := os.OpenFile(pathFuzzSamples, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	errcheck(err)
-	defer fileFuzzSamples.Close()
-	fileFuzzSamplesT1, err := os.OpenFile(pathFuzzSamplesT1, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	errcheck(err)
-	defer fileFuzzSamplesT1.Close()
-	fileFuzzScript, err := os.OpenFile(pathFuzzScript, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
-	errcheck(err)
-	defer fileFuzzScript.Close()
-
-	for _, file := range []*os.File{fileFuzzTest, fileFuzzSamples, fileFuzzSamplesT1} {
-		file.WriteString("package fuzz\n\n")
-	}
-
-	fileFuzzTest.WriteString(`import (
+	fuzzTest.WriteString(`import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -109,7 +113,7 @@ func main() {
 
 `)
 
-	fileFuzzScript.WriteString(`#!/bin/sh
+	fuzzScript.WriteString(`#!/bin/sh
 set -ex
 
 TIME=5s
@@ -123,16 +127,16 @@ TIME=5s
 		"add2.go",
 		"add.go",
 		"assign.go",
-		// "define.go",
-		// "func.go",
-		// "func2.go",
+		"define.go",
+		"func.go",
+		"func2.go",
 		"if2.go",
 		"if3.go",
 		"if.go",
 		"nest.go",
 		"return.go",
-		// "struct.go",
-		// "var.go",
+		"struct.go",
+		"var.go",
 	}
 
 	inputSampleMap := make(map[string]string)
@@ -140,13 +144,13 @@ TIME=5s
 	inputMap := make(map[string]string)
 	outputLenMap := make(map[string]int)
 
-	for _, name := range []string{"assign", "if3", "return"} {
+	for _, name := range []string{"assign", "if3", "return", "define", "var"} {
 		inputSampleMap[name] = "uint8(128)"
 		inputSpecMap[name] = "a uint8"
 		inputMap[name] = "a"
 		outputLenMap[name] = 1
 	}
-	for _, name := range []string{"add2", "add", "if2", "if"} {
+	for _, name := range []string{"add2", "add", "if2", "if", "func", "func2", "struct"} {
 		inputSampleMap[name] = "uint8(128), uint8(128)"
 		inputSpecMap[name] = "a uint8, b uint8"
 		inputMap[name] = "a, b"
@@ -170,20 +174,22 @@ TIME=5s
 		sampleContent := string(contentBytes)
 		sampleContent = suffixGlobals(sampleContent, sampleName)
 
-		f, err := ast.TranslateFile(samplePath, sampleContent)
+		pkg, err := ast.TranslateFile(samplePath, sampleContent)
 		errcheck(err)
 
-		var t1Str strings.Builder
-		p := ast.NewPrinter(&t1Str, ast.PrinterOpts{GoCompat: true})
-		p.File(&f)
+		var translateStr strings.Builder
+		p := ast.NewPrinter(&translateStr, ast.PrinterOpts{GoCompat: true})
+		p.Package(&pkg)
 
-		sampleContentT1 := t1Str.String()
-		sampleContentT1 = suffixGlobals(sampleContentT1, "t1")
+		sampleContentTranslate := translateStr.String()
+		sampleContentTranslate = suffixGlobals(sampleContentTranslate, "translate")
 
 		var fuzzTestStr strings.Builder
 		err = tmplFuzzTest.Execute(&fuzzTestStr, FuzzTestData{
 			NameCapital: strcase.ToCamel(sampleName),
 			Name:        sampleName,
+			PassCapital: "Translate",
+			Pass:        "translate",
 			InputSample: inputSampleMap[sampleName],
 			InputSpec:   inputSpecMap[sampleName],
 			Input:       inputMap[sampleName],
@@ -192,13 +198,13 @@ TIME=5s
 		errcheck(err)
 
 		sampleContent = strings.ReplaceAll(sampleContent, "package main\n", "")
-		fileFuzzSamples.WriteString(sampleContent)
-		fileFuzzSamplesT1.WriteString(sampleContentT1)
-		fileFuzzSamplesT1.WriteString("\n")
-		fileFuzzTest.WriteString(fuzzTestStr.String())
-		fileFuzzTest.WriteString("\n")
-		fileFuzzScript.WriteString(fmt.Sprintf(
-			"go test ./fuzz -fuzztime ${TIME} -fuzz=\"^Fuzz%v$\"\n",
+		fuzzSamples.File.WriteString(sampleContent)
+		fuzzSamplesTranslate.WriteString(sampleContentTranslate)
+		fuzzSamplesTranslate.WriteString("\n")
+		fuzzTest.WriteString(fuzzTestStr.String())
+		fuzzTest.WriteString("\n")
+		fuzzScript.WriteString(fmt.Sprintf(
+			"go test ./fuzz -fuzztime ${TIME} -fuzz=\"^FuzzTranslate%v$\"\n",
 			strcase.ToCamel(sampleName),
 		))
 	}

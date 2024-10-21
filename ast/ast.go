@@ -1,7 +1,12 @@
+// Package ast defines an internal ast that is a reduced version of go's ast.
+// The aim of this ast is to represent go source code in a simple way to be
+// transformed into a static circuit.  Several transformations of this ast are
+// implemented to achieve that.
 package ast
 
-type File struct {
-	Decls []Decl
+type Package struct {
+	Structs []*StructDecl
+	Funcs   []*FuncDecl
 }
 
 type Decl interface {
@@ -10,7 +15,8 @@ type Decl interface {
 
 func (*FuncDecl) declNode() {}
 
-// func (*StructDecl) declNode() {}
+func (*StructDecl) declNode() {}
+
 // func (*ConstDecl) declNode()  {}
 func (*VarDecl) declNode() {}
 
@@ -25,7 +31,8 @@ type PrimType struct {
 	size   int
 }
 
-func (*PrimType) typeNode() {}
+func (*PrimType) typeNode()   {}
+func (*StructDecl) typeNode() {}
 
 func NewPrimType(signed bool, size int) PrimType {
 	return PrimType{signed: signed, size: size}
@@ -47,7 +54,10 @@ type Field struct {
 	Type Type
 }
 
-// type StructDecl struct{}
+type StructDecl struct {
+	Name   string
+	Fields []Field
+}
 
 // TODO
 // type ConstDecl struct{}
@@ -72,8 +82,6 @@ func (*BlockStmt) stmtNode()  {}
 func (*ReturnStmt) stmtNode() {}
 func (*MetaStmt) stmtNode()   {}
 
-// func (*ReturnStmt) stmtNode() {}
-
 type BlockStmt struct {
 	List []Stmt
 }
@@ -96,28 +104,29 @@ type IfStmt struct {
 
 // Variable Reference for assignment
 type VarRef struct {
-	Name string
+	// If Parent != nil then it contains the reference struct and Name is
+	// the field
+	Parent *VarRef
+	Name   string
 }
 
 type AssignStmt struct {
-	Lhs VarRef
+	Lhs []VarRef
 	Rhs Expr
 }
-
-// type ReturnStmt struct {
-// 	Results []Expr
-// }
 
 type Expr interface {
 	exprNode()
 }
 
-func (*BinaryExpr) exprNode() {}
-func (*CondExpr) exprNode()   {}
-func (*Ident) exprNode()      {}
-func (*BasicLit) exprNode()   {}
+func (*BinaryExpr) exprNode()   {}
+func (*CondExpr) exprNode()     {}
+func (*Ident) exprNode()        {}
+func (*BasicLit) exprNode()     {}
+func (*CallExpr) exprNode()     {}
+func (*StructLit) exprNode()    {}
+func (*SelectorExpr) exprNode() {}
 
-// func (*CallExpr) exprNode()     {}
 // func (*CompositeLit) exprNode() {}
 
 type CondExpr struct {
@@ -136,10 +145,24 @@ type Ident struct {
 	Name string
 }
 
-// TODO
 type BasicLit struct {
 	Type  Type
 	Value int64
+}
+
+type KeyValueExpr struct {
+	Key   string
+	Value Expr
+}
+
+type StructLit struct {
+	Name      string
+	KeyValues []KeyValueExpr
+}
+
+type SelectorExpr struct {
+	X   Expr
+	Sel string
 }
 
 type Meta interface {
@@ -157,8 +180,10 @@ type Comment struct {
 	Value string
 }
 
-// TODO
-// type CallExpr struct{}
+type CallExpr struct {
+	Fun  string
+	Args []Expr
+}
 
 // TODO
 // type CompositeLit struct{}

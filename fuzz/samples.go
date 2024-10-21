@@ -16,6 +16,28 @@ func entrypoint_assign(a uint8) uint8 {
 	return a
 }
 
+func entrypoint_define(a uint8) uint8 {
+	b := a + 1
+	return b
+}
+
+func entrypoint_func(a, b uint8) uint8 {
+	return add_func(a, b)
+}
+
+func add_func(a, b uint8) uint8 {
+	return a + b
+}
+
+func entrypoint_func2(a, b uint8) uint8 {
+	var x, y = add_func2(a, b)
+	return x + y
+}
+
+func add_func2(a, b uint8) (uint8, uint8) {
+	return a, a + b
+}
+
 func entrypoint_if2(a, b uint8) uint8 {
 	var x uint8 = 0
 	if a > 5 {
@@ -73,4 +95,26 @@ func entrypoint_nest(a, b uint8) (uint8, uint16) {
 
 func entrypoint_return(a uint8) uint8 {
 	return a
+}
+
+type Data_struct struct {
+	a uint8
+	b uint8
+}
+
+func entrypoint_struct(a, b uint8) uint8 {
+	d := Data_struct{a: a, b: b}
+	d.a = d.a + 1
+	r := add_struct(d)
+	return r
+}
+
+func add_struct(d Data_struct) uint8 {
+	return d.a + d.b
+}
+
+func entrypoint_var(a uint8) uint8 {
+	var b = uint8(0)
+	b = a + 1
+	return b
 }
