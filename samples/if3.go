@@ -8,7 +8,7 @@ func entrypoint(
 		// x = x + b
 		if a/3 == 0 {
 			x = x + 2
-		} else {
+		} else if x == 0 {
 			x = x + 3
 		}
 	}

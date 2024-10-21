@@ -14,6 +14,8 @@ type Printer struct {
 	lvl  int
 	out  io.Writer
 	opts PrinterOpts
+	// dirtyLine is true when we have printed something in the current line and we haven't addad a new line yet
+	dirtyLine bool
 }
 
 func NewPrinter(out io.Writer, opts PrinterOpts) Printer {
@@ -31,13 +33,18 @@ func (p *Printer) errcheck(err error) {
 }
 
 func (p *Printer) Printf(format string, a ...any) {
-	indent := strings.Repeat("  ", p.lvl)
+	indent := ""
+	if !p.dirtyLine {
+		indent = strings.Repeat("  ", p.lvl)
+	}
 	_, err := fmt.Fprintf(p.out, "%v"+format, append([]any{indent}, a...)...)
 	p.errcheck(err)
+	p.dirtyLine = true
 }
 
 func (p *Printer) Printfln(format string, a ...any) {
 	p.Printf(format+"\n", a...)
+	p.dirtyLine = false
 }
 
 func (p *Printer) VarDecl(vd *VarDecl) {
@@ -127,6 +134,28 @@ func (p *Printer) MetaStmt(m *MetaStmt) {
 	}
 }
 
+func (p *Printer) ReturnStmt(rs *ReturnStmt) {
+	p.Printfln("return")
+}
+
+func (p *Printer) IfStmt(is *IfStmt) {
+	p.Printfln("if %v {", SprintExpr(is.Cond))
+	p.BlockStmt(is.Body)
+	switch es := is.Else.(type) {
+	case *BlockStmt:
+		p.Printfln("} else {")
+		p.BlockStmt(es)
+		p.Printfln("}")
+	case *IfStmt:
+		p.Printf("} else ")
+		p.IfStmt(es)
+	case nil:
+		p.Printfln("}")
+	default:
+		panic("unreachable")
+	}
+}
+
 func (p *Printer) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
 	condExpr, ok := as.Rhs.(*CondExpr)
@@ -140,6 +169,31 @@ func (p *Printer) AssignStmt(as *AssignStmt) {
 	}
 }
 
+func (p *Printer) BlockStmt(bs *BlockStmt) {
+	p.lvl += 1
+	for _, s := range bs.List {
+		switch s := s.(type) {
+		case *DeclStmt:
+			p.DeclStmt(s)
+		case *AssignStmt:
+			p.AssignStmt(s)
+		case *IfStmt:
+			p.IfStmt(s)
+		case *BlockStmt:
+			p.Printfln("{")
+			p.BlockStmt(s)
+			p.Printfln("}")
+		case *ReturnStmt:
+			p.ReturnStmt(s)
+		case *MetaStmt:
+			p.MetaStmt(s)
+		default:
+			panic("TODO")
+		}
+	}
+	p.lvl -= 1
+}
+
 func (p *Printer) FuncDecl(fd *FuncDecl) {
 	p.Printfln("func %v (", fd.Name)
 	for _, param := range fd.Type.Params {
@@ -150,19 +204,7 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 		p.Printfln("  %v %v,", result.Name, p.Type(result.Type))
 	}
 	p.Printfln(") {")
-	for _, s := range fd.Body {
-		switch s := s.(type) {
-		case *DeclStmt:
-			p.DeclStmt(s)
-		case *AssignStmt:
-			p.AssignStmt(s)
-		case *MetaStmt:
-			p.MetaStmt(s)
-		default:
-			panic("TODO")
-		}
-	}
-	p.Printfln("  return")
+	p.BlockStmt(fd.Body)
 	p.Printfln("}")
 }
 

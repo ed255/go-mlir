@@ -9,67 +9,18 @@ import (
 	"go/types"
 	"log"
 	"runtime/debug"
-	"slices"
-	"sort"
 	"strconv"
 )
 
 type Var struct {
-	SrcName  string
-	BlockId  int
-	BranchId int
-	Type     Type
-	// Variable from which this Var is branching.  This is an intermediate
-	// branch variable that needs updating after the branchin block is
-	// completed.
-	Parent *Var
-	// Variable from which this Var branch initiates.  This is the value
-	// that the original variable takes if the branch doesn't apply.
-	Ancestor *Var
-}
-
-func (v *Var) Name() string {
-	s := fmt.Sprintf("%v", v.SrcName)
-	if v.BlockId != 0 {
-		s += fmt.Sprintf("_b%v", v.BlockId)
-	}
-	if v.BranchId != 0 {
-		s += fmt.Sprintf("_c%v", v.BranchId)
-	}
-	return s
-}
-
-type Block struct {
-	id int
-	// Map from src var name to block Var
-	vars map[string]*Var
-	// List of branching vars
-	branchVars []*Var
-	// true if we're in a branch block
-	branch bool
-}
-
-func (b *Block) AddVar(name string, typ Type) *Var {
-	v := &Var{
-		SrcName: name,
-		BlockId: b.id,
-		Type:    typ,
-	}
-	if _, ok := b.vars[v.Name()]; ok {
-		panic(fmt.Errorf("Var.Name() %v already exists in current block", v.Name()))
-	}
-	b.vars[name] = v
-	return v
+	SrcName string
+	Type    Type
 }
 
 type Translator struct {
 	typeInfo    types.Info
 	funcResults []Field
-	blocks      []Block
-	curFuncBody []Stmt
 	lvl         int
-	blockCnt    int
-	varCnt      int
 }
 
 func NewTranslator(typeInfo types.Info) Translator {
@@ -82,37 +33,6 @@ func (t *Translator) errcheck(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func (t *Translator) CurBlock() *Block {
-	return &t.blocks[len(t.blocks)-1]
-}
-
-func (t *Translator) PushStmt(s ...Stmt) {
-	t.curFuncBody = append(t.curFuncBody, s...)
-}
-func (t *Translator) PushComment(s string) {
-	t.PushStmt(&MetaStmt{Meta: &Comment{Value: s}})
-}
-
-func (t *Translator) PushBlock() {
-	id := t.blockCnt
-	t.lvl += 1
-	t.PushStmt(&MetaStmt{
-		Meta: &LvlDelta{Delta: +1},
-	})
-	t.blockCnt += 1
-	t.blocks = append(t.blocks, Block{id: id, vars: make(map[string]*Var)})
-}
-
-func (t *Translator) PopBlock() Block {
-	t.lvl -= 1
-	t.PushStmt(&MetaStmt{
-		Meta: &LvlDelta{Delta: -1},
-	})
-	block := t.blocks[len(t.blocks)-1]
-	t.blocks = t.blocks[:len(t.blocks)-1]
-	return block
 }
 
 var (
@@ -217,21 +137,6 @@ func (t *Translator) BasicLit(basicLit *ast.BasicLit) BasicLit {
 	}
 }
 
-func (t *Translator) DeclAssignAnon(expr Expr, typ Type) Expr {
-	name := fmt.Sprintf("_%v", t.varCnt)
-	t.varCnt += 1
-	vd := t.GenVarDecl(name, typ)
-	declStmt := DeclStmt{Decl: vd}
-	assignStmt := AssignStmt{
-		Lhs: VarRef{Name: vd.Name},
-		Rhs: expr,
-	}
-	t.PushStmt(&declStmt, &assignStmt)
-	return &Ident{
-		Name: vd.Name,
-	}
-}
-
 func (t *Translator) Expr(expr ast.Expr) []Expr {
 	var e Expr
 	switch expr := expr.(type) {
@@ -242,9 +147,8 @@ func (t *Translator) Expr(expr ast.Expr) []Expr {
 			Y:  t.Expr(expr.Y)[0],
 		}
 	case *ast.Ident:
-		v := t.GetVar(expr.Name)
 		e = &Ident{
-			Name: v.Name(),
+			Name: expr.Name,
 		}
 	case *ast.BasicLit:
 		bl := t.BasicLit(expr)
@@ -256,40 +160,8 @@ func (t *Translator) Expr(expr ast.Expr) []Expr {
 }
 
 func (t *Translator) VarRef(name string) VarRef {
-	depth, branchBlocks, v := t.getVar(name)
-	if len(branchBlocks) > 0 && depth != len(t.blocks)-1 {
-		ancestor := v
-		parent := ancestor
-		var child *Var
-		// We build a linked list from Ancestor to the deepest
-		// branchBlock, chained by the Parent field
-		for i, block := range branchBlocks {
-			isLast := i == len(branchBlocks)-1
-			// Now we only add the var we're about to use.  The
-			// other vars in the chain will be added when emitting
-			// their CondExpr.
-			if isLast {
-				child = block.AddVar(name, v.Type)
-			} else {
-				child = &Var{}
-			}
-			*child = *ancestor
-			child.BranchId = block.id
-			child.Parent = parent
-			child.Ancestor = ancestor
-			if isLast {
-				t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: child.Name(), Type: child.Type}})
-			}
-			block.branchVars = append(block.branchVars, child)
-			parent = child
-		}
-		return VarRef{
-			Name: child.Name(),
-		}
-	} else {
-		return VarRef{
-			Name: v.Name(),
-		}
+	return VarRef{
+		Name: name,
 	}
 }
 
@@ -302,51 +174,22 @@ func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 	}
 }
 
-// getVar returns:
-// - depth (block depth were var is declared)
-// - list of branching blocks in the path (from shallow to deepest, excluding
-// the block where the var is defined)
-// - var
-func (t *Translator) getVar(name string) (int, []*Block, *Var) {
-	var branchBlocks []*Block
-	for i := 0; i < len(t.blocks); i++ {
-		depth := len(t.blocks) - 1 - i
-		block := &t.blocks[depth]
-		v, ok := block.vars[name]
-		// collect branching blocks in the path, excluding the block
-		// where the var is defined
-		if !ok && block.branch == true {
-			branchBlocks = append(branchBlocks, block)
-		}
-		if ok {
-			slices.Reverse(branchBlocks)
-			return depth, branchBlocks, v
-		}
-	}
-	panic(fmt.Errorf("Var %v not found in any block", name))
-}
-
-func (t *Translator) GetVar(name string) *Var {
-	_, _, v := t.getVar(name)
-	return v
-}
-
 func (t *Translator) GenVarDecl(name string, typ Type) *VarDecl {
-	v := t.CurBlock().AddVar(name, typ)
 	return &VarDecl{
-		Name: v.Name(),
+		Name: name,
 		Type: typ,
 	}
 }
 
-func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) {
+func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
+	var ss Stmts
 	switch assignStmt.Tok {
 	case token.DEFINE:
 		i := 0
 		for _, rhs := range assignStmt.Rhs {
 			rs := t.Expr(rhs)
 			for _, r := range rs {
-				lhs := t.VarRefFromExpr(assignStmt.Lhs[i])
+				lhs := assignStmt.Lhs[i].(*ast.Ident)
 				declStmt := DeclStmt{
 					Decl: t.GenVarDecl(
 						lhs.Name,
@@ -354,10 +197,10 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) {
 					),
 				}
 				assignStmt := AssignStmt{
-					Lhs: lhs,
+					Lhs: t.VarRef(lhs.Name),
 					Rhs: r,
 				}
-				t.PushStmt(&declStmt, &assignStmt)
+				ss.Push(&declStmt, &assignStmt)
 				i += 1
 			}
 		}
@@ -370,7 +213,7 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) {
 					Lhs: t.VarRefFromExpr(assignStmt.Lhs[i]),
 					Rhs: r,
 				}
-				t.PushStmt(&stmt)
+				ss.Push(&stmt)
 				i += 1
 			}
 		}
@@ -379,9 +222,11 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) {
 	default:
 		panic("TODO")
 	}
+	return ss.List
 }
 
-func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) {
+func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []Stmt {
+	var ss Stmts
 	i := 0
 	for _, result := range returnStmt.Results {
 		rs := t.Expr(result)
@@ -391,12 +236,15 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) {
 				Rhs: r,
 			}
 			i += 1
-			t.PushStmt(&stmt)
+			ss.Push(&stmt)
 		}
 	}
+	ss.Push(&ReturnStmt{})
+	return ss.List
 }
 
-func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) {
+func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
+	var ss Stmts
 	var lhss []string
 	for _, name := range valueSpec.Names {
 		lhs := name.Name
@@ -411,7 +259,7 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) {
 					t.TypeFromExpr(valueSpec.Type),
 				),
 			}
-			t.PushStmt(&declStmt)
+			ss.Push(&declStmt)
 		}
 	} else {
 		i := 0
@@ -428,21 +276,23 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) {
 					Lhs: t.VarRef(lhss[i]),
 					Rhs: r,
 				}
-				t.PushStmt(&declStmt, &assignStmt)
+				ss.Push(&declStmt, &assignStmt)
 				i += 1
 			}
 		}
 	}
+	return ss.List
 }
 
-func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) {
+func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
+	var ss Stmts
 	switch declStmt := declStmt.Decl.(type) {
 	case *ast.GenDecl:
 		switch declStmt.Tok {
 		case token.VAR:
 			for _, spec := range declStmt.Specs {
 				valueSpec := spec.(*ast.ValueSpec)
-				t.ValueSpec(valueSpec)
+				ss.Push(t.ValueSpec(valueSpec)...)
 			}
 		default:
 			panic(fmt.Errorf("unsupported GenDecl token: %v", declStmt.Tok))
@@ -451,139 +301,75 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) {
 	default:
 		panic(fmt.Errorf("unsupported Decl: %T", declStmt))
 	}
+	return ss.List
 }
 
-func (t *Translator) IfStmt(ifStmt *ast.IfStmt) {
+func (t *Translator) IfStmt(ifStmt *ast.IfStmt) *IfStmt {
 	if ifStmt.Init != nil {
 		panic(fmt.Errorf("unsupported IfStmt.Init"))
 	}
 	cond := t.Expr(ifStmt.Cond)[0]
-	condStr := SprintExpr(cond)
-	cond = t.DeclAssignAnon(cond, &Bool)
-
-	// True case
-	t.PushBlock()
-	curBlock := t.CurBlock()
-	curBlock.branch = true
-	t.PushComment(fmt.Sprintf("(bid=%v) if %v", curBlock.id, condStr))
-	t.BlockStmt(ifStmt.Body)
-	trueBlockBranchVars := t.PopBlock().branchVars
-
-	// False case
-	var falseBlockBranchVars []*Var
-	if ifStmt.Else != nil {
-		t.PushBlock()
-		curBlock := t.CurBlock()
-		curBlock.branch = true
-		t.PushComment(fmt.Sprintf("(bid=%v) else", curBlock.id))
-		switch elseStmt := ifStmt.Else.(type) {
-		case *ast.BlockStmt:
-			t.BlockStmt(elseStmt)
-		case *ast.IfStmt:
-			t.IfStmt(elseStmt)
-		default:
-			panic("unreachable")
-		}
-		falseBlockBranchVars = t.PopBlock().branchVars
+	body := t.BlockStmt(ifStmt.Body)
+	var es Stmt
+	switch elseStmt := ifStmt.Else.(type) {
+	case *ast.BlockStmt:
+		es = t.BlockStmt(elseStmt)
+	case *ast.IfStmt:
+		es = t.IfStmt(elseStmt)
+	case nil:
+	default:
+		panic("unreachable")
 	}
-
-	// Arrange vars that have branched in the true and false case by name
-	branchVars := make(map[string][2]*Var)
-	for _, v := range trueBlockBranchVars {
-		branchVars[v.SrcName] = [2]*Var{v, nil}
-	}
-	for _, v := range falseBlockBranchVars {
-		pair, ok := branchVars[v.SrcName]
-		if ok {
-			pair[1] = v
-			branchVars[v.SrcName] = pair
-		} else {
-			branchVars[v.SrcName] = [2]*Var{nil, v}
-		}
-	}
-
-	curBlock = t.CurBlock()
-	keys := make([]string, 0, len(branchVars))
-	for k := range branchVars {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		pair := branchVars[key]
-		trueCaseVar := pair[0]
-		falseCaseVar := pair[1]
-		// Find the parent from either true/false case
-		v := trueCaseVar
-		if v == nil {
-			v = falseCaseVar
-		}
-		ancestor := v.Ancestor
-		parent := v.Parent
-
-		// We haven't reached the ancestor yet, we need to add and
-		// declare the var
-		if parent.Parent != nil {
-			parentVar := curBlock.AddVar(parent.SrcName, parent.Type)
-			*parentVar = *parent
-			t.PushStmt(&DeclStmt{Decl: &VarDecl{Name: parent.Name(), Type: parent.Type}})
-		}
-
-		// oldParent := *parent
-		caseTrueName := ancestor.Name()
-		caseFalseName := ancestor.Name()
-		if trueCaseVar != nil {
-			caseTrueName = trueCaseVar.Name()
-		}
-		if falseCaseVar != nil {
-			caseFalseName = falseCaseVar.Name()
-		}
-		t.PushStmt(&AssignStmt{
-			Lhs: VarRef{
-				Name: parent.Name(),
-			},
-			Rhs: &CondExpr{
-				Cond:      cond,
-				CaseTrue:  &Ident{Name: caseTrueName},
-				CaseFalse: &Ident{Name: caseFalseName},
-			},
-		})
+	return &IfStmt{
+		Cond: cond,
+		Body: body,
+		Else: es,
 	}
 }
 
-func (t *Translator) Stmt(stmt ast.Stmt) {
+type Stmts struct {
+	List []Stmt
+}
+
+func (ss *Stmts) Push(s ...Stmt) {
+	ss.List = append(ss.List, s...)
+}
+
+func (t *Translator) Stmt(stmt ast.Stmt) []Stmt {
+	var ss Stmts
 	switch stmt := stmt.(type) {
 	case *ast.ReturnStmt:
-		t.ReturnStmt(stmt)
+		ss.Push(t.ReturnStmt(stmt)...)
 	case *ast.AssignStmt:
-		t.AssignStmt(stmt)
+		ss.Push(t.AssignStmt(stmt)...)
 	case *ast.DeclStmt:
-		t.DeclStmt(stmt)
+		ss.Push(t.DeclStmt(stmt)...)
 	case *ast.IfStmt:
-		t.IfStmt(stmt)
+		ss.Push(t.IfStmt(stmt))
 	case *ast.BlockStmt:
-		t.PushBlock()
-		t.BlockStmt(stmt)
-		t.PopBlock()
+		ss.Push(t.BlockStmt(stmt))
 	default:
 		panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 	}
+	return ss.List
 }
 
-func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) {
+func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) *BlockStmt {
+	var ss Stmts
 	for _, stmt := range blockStmt.List {
-		t.Stmt(stmt)
+		ss.Push(t.Stmt(stmt)...)
+	}
+	return &BlockStmt{
+		List: ss.List,
 	}
 }
 
 func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
-	t.PushBlock()
-	defer t.PopBlock()
 	var params []Field
 	for _, field := range funcDecl.Type.Params.List {
 		for _, name := range field.Names {
 			typ := t.TypeFromExpr(field.Type)
-			v := t.CurBlock().AddVar(name.Name, typ)
-			param := Field{Name: v.Name(), Type: typ}
+			param := Field{Name: name.Name, Type: typ}
 			params = append(params, param)
 		}
 	}
@@ -592,32 +378,27 @@ func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
 	for i, field := range funcDecl.Type.Results.List {
 		if len(field.Names) == 0 {
 			typ := t.TypeFromExpr(field.Type)
-			v := t.CurBlock().AddVar(fmt.Sprintf("_out%v", i), typ)
-			result := Field{Name: v.Name(), Type: typ}
+			name := fmt.Sprintf("_out%v", i)
+			result := Field{Name: name, Type: typ}
 			results = append(results, result)
 		} else {
 			for _, name := range field.Names {
 				typ := t.TypeFromExpr(field.Type)
-				v := t.CurBlock().AddVar(name.Name, typ)
-				result := Field{Name: v.Name(), Type: typ}
+				result := Field{Name: name.Name, Type: typ}
 				results = append(results, result)
 			}
 		}
 	}
 	t.funcResults = results
 
-	t.curFuncBody = []Stmt{}
-	t.PushBlock()
-	t.BlockStmt(funcDecl.Body)
-	// spew.Dump(t.CurBlock().vars)
-	t.PopBlock()
+	bs := t.BlockStmt(funcDecl.Body)
 	return &FuncDecl{
 		Name: funcDecl.Name.Name,
 		Type: FuncType{
 			Params:  params,
 			Results: results,
 		},
-		Body: t.curFuncBody,
+		Body: bs,
 	}
 }
 

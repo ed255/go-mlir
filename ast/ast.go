@@ -34,7 +34,7 @@ func NewPrimType(signed bool, size int) PrimType {
 type FuncDecl struct {
 	Name string
 	Type FuncType
-	Body []Stmt
+	Body *BlockStmt
 }
 
 type FuncType struct {
@@ -61,19 +61,24 @@ type VarDecl struct {
 // TODO
 // type TypeDecl struct{}
 
-// type BlockStmt struct {
-// 	List []Stmt
-// }
-
 type Stmt interface {
 	stmtNode()
 }
 
 func (*DeclStmt) stmtNode()   {}
 func (*AssignStmt) stmtNode() {}
+func (*IfStmt) stmtNode()     {}
+func (*BlockStmt) stmtNode()  {}
+func (*ReturnStmt) stmtNode() {}
 func (*MetaStmt) stmtNode()   {}
 
 // func (*ReturnStmt) stmtNode() {}
+
+type BlockStmt struct {
+	List []Stmt
+}
+
+type ReturnStmt struct{}
 
 type MetaStmt struct {
 	Meta Meta
@@ -81,6 +86,12 @@ type MetaStmt struct {
 
 type DeclStmt struct {
 	Decl Decl
+}
+
+type IfStmt struct {
+	Cond Expr
+	Body *BlockStmt
+	Else Stmt // BlockStmt, IfStmt or nil
 }
 
 // Variable Reference for assignment
