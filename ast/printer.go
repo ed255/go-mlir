@@ -178,6 +178,40 @@ func (p *Printer) IfStmt(is *IfStmt) {
 	}
 }
 
+func (p *Printer) ForStmt(f *ForStmt) {
+	p.Printfln("{")
+	p.lvl += 1
+	for _, s := range f.Init {
+		p.Stmt(s)
+	}
+
+	p.Printfln("for {")
+	p.lvl += 1
+	p.Printfln("if !(%v) { break }", SprintExpr(f.Cond))
+	p.Printfln("{")
+	p.BlockStmt((f.Body))
+	p.Printfln("}")
+	for _, s := range f.Post {
+		p.Stmt(s)
+	}
+	p.lvl -= 1
+	p.Printfln("}")
+
+	p.lvl -= 1
+	p.Printfln("}")
+}
+
+func (p *Printer) BranchStmt(bs *BranchStmt) {
+	switch bs.Tok {
+	case BREAK:
+		p.Printfln("break")
+	case CONTINUE:
+		p.Printfln("continue")
+	default:
+		panic("unreachable")
+	}
+}
+
 func SprintVarRef(vr *VarRef) string {
 	str := vr.Name
 	parent := vr.Parent
@@ -195,7 +229,7 @@ func (p *Printer) AssignStmt(as *AssignStmt) {
 		if len(as.Lhs) != 1 {
 			panic("unreachable")
 		}
-		// go friendly ternary operator
+		// go-friendly ternary operator
 		printCondExprGo(&exprStr, condExpr, SprintVarRef(&as.Lhs[0]))
 		p.Printfln("%v", exprStr.String())
 	} else {
@@ -210,27 +244,35 @@ func (p *Printer) AssignStmt(as *AssignStmt) {
 	}
 }
 
+func (p *Printer) Stmt(s Stmt) {
+	switch s := s.(type) {
+	case *DeclStmt:
+		p.DeclStmt(s)
+	case *AssignStmt:
+		p.AssignStmt(s)
+	case *IfStmt:
+		p.IfStmt(s)
+	case *BlockStmt:
+		p.Printfln("{")
+		p.BlockStmt(s)
+		p.Printfln("}")
+	case *ReturnStmt:
+		p.ReturnStmt(s)
+	case *MetaStmt:
+		p.MetaStmt(s)
+	case *ForStmt:
+		p.ForStmt(s)
+	case *BranchStmt:
+		p.BranchStmt(s)
+	default:
+		panic("TODO")
+	}
+}
+
 func (p *Printer) BlockStmt(bs *BlockStmt) {
 	p.lvl += 1
 	for _, s := range bs.List {
-		switch s := s.(type) {
-		case *DeclStmt:
-			p.DeclStmt(s)
-		case *AssignStmt:
-			p.AssignStmt(s)
-		case *IfStmt:
-			p.IfStmt(s)
-		case *BlockStmt:
-			p.Printfln("{")
-			p.BlockStmt(s)
-			p.Printfln("}")
-		case *ReturnStmt:
-			p.ReturnStmt(s)
-		case *MetaStmt:
-			p.MetaStmt(s)
-		default:
-			panic("TODO")
-		}
+		p.Stmt(s)
 	}
 	p.lvl -= 1
 }

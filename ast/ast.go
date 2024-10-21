@@ -80,6 +80,8 @@ func (*AssignStmt) stmtNode() {}
 func (*IfStmt) stmtNode()     {}
 func (*BlockStmt) stmtNode()  {}
 func (*ReturnStmt) stmtNode() {}
+func (*ForStmt) stmtNode()    {}
+func (*BranchStmt) stmtNode() {}
 func (*MetaStmt) stmtNode()   {}
 
 type BlockStmt struct {
@@ -87,6 +89,17 @@ type BlockStmt struct {
 }
 
 type ReturnStmt struct{}
+
+type ForStmt struct {
+	Init []Stmt
+	Cond Expr
+	Post []Stmt
+	Body *BlockStmt
+}
+
+type BranchStmt struct {
+	Tok BranchToken
+}
 
 type MetaStmt struct {
 	Meta Meta
@@ -187,6 +200,13 @@ type CallExpr struct {
 
 // TODO
 // type CompositeLit struct{}
+
+type BranchToken int
+
+const (
+	BREAK BranchToken = iota
+	CONTINUE
+)
 
 type Op int
 

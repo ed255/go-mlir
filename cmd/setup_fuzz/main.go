@@ -137,6 +137,8 @@ TIME=5s
 		"return.go",
 		"struct.go",
 		"var.go",
+		"for.go",
+		"for2.go",
 	}
 
 	inputSampleMap := make(map[string]string)
@@ -144,7 +146,7 @@ TIME=5s
 	inputMap := make(map[string]string)
 	outputLenMap := make(map[string]int)
 
-	for _, name := range []string{"assign", "if3", "return", "define", "var"} {
+	for _, name := range []string{"assign", "if3", "return", "define", "var", "for", "for2"} {
 		inputSampleMap[name] = "uint8(128)"
 		inputSpecMap[name] = "a uint8"
 		inputMap[name] = "a"

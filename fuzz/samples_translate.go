@@ -230,3 +230,48 @@ func entrypoint_var_translate (
 }
 
 
+func entrypoint_for_translate (
+  a uint8,
+) (
+  _out0 uint8,
+) {
+  {
+    var i int32
+    i = 0
+    for {
+      if !(i < 10) { break }
+      {
+        a = a + a
+      }
+      i = i + 1
+    }
+  }
+  _out0 = a
+  return
+}
+
+
+func entrypoint_for2_translate (
+  a uint8,
+) (
+  _out0 uint8,
+) {
+  {
+    var i int32
+    i = 0
+    for {
+      if !(i < 10) { break }
+      {
+        a = a + a
+        if a > 7 {
+          break
+        }
+      }
+      i = i + 1
+    }
+  }
+  _out0 = a
+  return
+}
+
+

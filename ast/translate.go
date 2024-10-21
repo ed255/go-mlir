@@ -300,6 +300,46 @@ func (t *Translator) ExprTypes(e ast.Expr) []Type {
 	return typs
 }
 
+func (t *Translator) BranchStmt(branchStmt *ast.BranchStmt) Stmt {
+	var tok BranchToken
+	switch branchStmt.Tok {
+	case token.BREAK:
+		tok = BREAK
+	case token.CONTINUE:
+		tok = CONTINUE
+	default:
+		panic(fmt.Errorf("unsupported BranchStmt.Tok %v", branchStmt.Tok))
+	}
+	return &BranchStmt{
+		Tok: tok,
+	}
+}
+
+func (t *Translator) IncDecStmt(incDecStmt *ast.IncDecStmt) Stmt {
+	var op Op
+	switch incDecStmt.Tok {
+	case token.INC:
+		op = ADD
+	case token.DEC:
+		op = SUB
+	default:
+		panic("unreachable")
+	}
+
+	one := &BasicLit{
+		Type:  t.TypeFromExpr(incDecStmt.X),
+		Value: 1,
+	}
+	return &AssignStmt{
+		Lhs: []VarRef{t.VarRefFromExpr(incDecStmt.X)},
+		Rhs: &BinaryExpr{
+			X:  t.Expr(incDecStmt.X),
+			Op: op,
+			Y:  one,
+		},
+	}
+}
+
 func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 	var ss Stmts
 	switch assignStmt.Tok {
@@ -422,6 +462,26 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
 	return ss.List
 }
 
+func (t *Translator) ForStmt(forStmt *ast.ForStmt) *ForStmt {
+	var init, post []Stmt
+	if forStmt.Init != nil {
+		init = t.Stmt(forStmt.Init)
+	}
+	if forStmt.Post != nil {
+		post = t.Stmt(forStmt.Post)
+	}
+	var cond Expr
+	if forStmt.Cond != nil {
+		cond = t.Expr(forStmt.Cond)
+	}
+	return &ForStmt{
+		Init: init,
+		Cond: cond,
+		Post: post,
+		Body: t.BlockStmt(forStmt.Body),
+	}
+}
+
 func (t *Translator) IfStmt(ifStmt *ast.IfStmt) *IfStmt {
 	if ifStmt.Init != nil {
 		panic(fmt.Errorf("unsupported IfStmt.Init"))
@@ -466,6 +526,12 @@ func (t *Translator) Stmt(stmt ast.Stmt) []Stmt {
 		ss.Push(t.IfStmt(stmt))
 	case *ast.BlockStmt:
 		ss.Push(t.BlockStmt(stmt))
+	case *ast.ForStmt:
+		ss.Push(t.ForStmt(stmt))
+	case *ast.IncDecStmt:
+		ss.Push(t.IncDecStmt(stmt))
+	case *ast.BranchStmt:
+		ss.Push(t.BranchStmt(stmt))
 	default:
 		panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 	}
