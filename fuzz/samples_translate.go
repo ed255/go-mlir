@@ -238,10 +238,9 @@ func entrypoint_for_translate (
   {
     var i int32
     i = 0
-    for {
-      if !(i < 10) { break }
+    for i < 10 {
       {
-        a = a + a
+        a = a + 1
       }
       i = i + 1
     }
@@ -259,11 +258,10 @@ func entrypoint_for2_translate (
   {
     var i int32
     i = 0
-    for {
-      if !(i < 10) { break }
+    for i < 10 {
       {
-        a = a + a
-        if a > 7 {
+        a = a + 1
+        if a > 19 {
           break
         }
       }

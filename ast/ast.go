@@ -80,7 +80,7 @@ func (*AssignStmt) stmtNode() {}
 func (*IfStmt) stmtNode()     {}
 func (*BlockStmt) stmtNode()  {}
 func (*ReturnStmt) stmtNode() {}
-func (*ForStmt) stmtNode()    {}
+func (*LoopStmt) stmtNode()   {}
 func (*BranchStmt) stmtNode() {}
 func (*MetaStmt) stmtNode()   {}
 
@@ -90,10 +90,8 @@ type BlockStmt struct {
 
 type ReturnStmt struct{}
 
-type ForStmt struct {
-	Init []Stmt
+type LoopStmt struct {
 	Cond Expr
-	Post []Stmt
 	Body *BlockStmt
 }
 

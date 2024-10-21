@@ -178,26 +178,9 @@ func (p *Printer) IfStmt(is *IfStmt) {
 	}
 }
 
-func (p *Printer) ForStmt(f *ForStmt) {
-	p.Printfln("{")
-	p.lvl += 1
-	for _, s := range f.Init {
-		p.Stmt(s)
-	}
-
-	p.Printfln("for {")
-	p.lvl += 1
-	p.Printfln("if !(%v) { break }", SprintExpr(f.Cond))
-	p.Printfln("{")
-	p.BlockStmt((f.Body))
-	p.Printfln("}")
-	for _, s := range f.Post {
-		p.Stmt(s)
-	}
-	p.lvl -= 1
-	p.Printfln("}")
-
-	p.lvl -= 1
+func (p *Printer) LoopStmt(ls *LoopStmt) {
+	p.Printfln("for %v {", SprintExpr(ls.Cond))
+	p.BlockStmt(ls.Body)
 	p.Printfln("}")
 }
 
@@ -260,8 +243,8 @@ func (p *Printer) Stmt(s Stmt) {
 		p.ReturnStmt(s)
 	case *MetaStmt:
 		p.MetaStmt(s)
-	case *ForStmt:
-		p.ForStmt(s)
+	case *LoopStmt:
+		p.LoopStmt(s)
 	case *BranchStmt:
 		p.BranchStmt(s)
 	default:

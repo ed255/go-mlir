@@ -462,7 +462,7 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
 	return ss.List
 }
 
-func (t *Translator) ForStmt(forStmt *ast.ForStmt) *ForStmt {
+func (t *Translator) ForStmt(forStmt *ast.ForStmt) Stmt {
 	var init, post []Stmt
 	if forStmt.Init != nil {
 		init = t.Stmt(forStmt.Init)
@@ -474,11 +474,17 @@ func (t *Translator) ForStmt(forStmt *ast.ForStmt) *ForStmt {
 	if forStmt.Cond != nil {
 		cond = t.Expr(forStmt.Cond)
 	}
-	return &ForStmt{
-		Init: init,
+	var stmts Stmts
+	stmts.Push(init...)
+	var loopBody Stmts
+	loopBody.Push(t.BlockStmt(forStmt.Body))
+	loopBody.Push(post...)
+	stmts.Push(&LoopStmt{
 		Cond: cond,
-		Post: post,
-		Body: t.BlockStmt(forStmt.Body),
+		Body: &BlockStmt{List: loopBody.List},
+	})
+	return &BlockStmt{
+		List: stmts.List,
 	}
 }
 
