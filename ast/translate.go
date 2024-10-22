@@ -25,6 +25,7 @@ type Translator struct {
 	structs     map[string]*StructDecl
 	structList  []*StructDecl
 	funcList    []*FuncDecl
+	blockCnt    int
 	lvl         int
 }
 
@@ -33,6 +34,15 @@ func NewTranslator(typeInfo types.Info) Translator {
 		typeInfo: typeInfo,
 		structs:  make(map[string]*StructDecl),
 	}
+}
+
+func (t *Translator) NewBlockStmt(ss []Stmt) *BlockStmt {
+	bs := &BlockStmt{
+		Id:   t.blockCnt,
+		List: ss,
+	}
+	t.blockCnt += 1
+	return bs
 }
 
 func (t *Translator) errcheck(err error) {
@@ -477,17 +487,13 @@ func (t *Translator) ForStmt(forStmt *ast.ForStmt) Stmt {
 	if forStmt.Cond != nil {
 		cond = t.Expr(forStmt.Cond)
 	}
-	var stmts Stmts
-	stmts.Push(init...)
 	var loopBody Stmts
 	loopBody.Push(t.BlockStmt(forStmt.Body))
 	loopBody.Push(post...)
-	stmts.Push(&LoopStmt{
+	return &LoopStmt{
+		Init: init,
 		Cond: cond,
-		Body: &BlockStmt{List: loopBody.List},
-	})
-	return &BlockStmt{
-		List: stmts.List,
+		Body: t.NewBlockStmt(loopBody.List),
 	}
 }
 
@@ -552,9 +558,7 @@ func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) *BlockStmt {
 	for _, stmt := range blockStmt.List {
 		ss.Push(t.Stmt(stmt)...)
 	}
-	return &BlockStmt{
-		List: ss.List,
-	}
+	return t.NewBlockStmt(ss.List)
 }
 
 func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
@@ -647,8 +651,9 @@ func translate(node ast.Node, typeInfo types.Info) Package {
 	t.FindStructs(file)
 	t.FindFuncs(file)
 	return Package{
-		Structs: t.structList,
-		Funcs:   t.funcList,
+		Structs:  t.structList,
+		Funcs:    t.funcList,
+		BlockCnt: t.blockCnt,
 	}
 }
 

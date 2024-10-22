@@ -5,8 +5,9 @@
 package ast
 
 type Package struct {
-	Structs []*StructDecl
-	Funcs   []*FuncDecl
+	Structs  []*StructDecl
+	Funcs    []*FuncDecl
+	BlockCnt int
 }
 
 type Decl interface {
@@ -82,21 +83,28 @@ func (*BlockStmt) stmtNode()  {}
 func (*ReturnStmt) stmtNode() {}
 func (*LoopStmt) stmtNode()   {}
 func (*BranchStmt) stmtNode() {}
+func (*EndBlock) stmtNode()   {}
 func (*MetaStmt) stmtNode()   {}
 
 type BlockStmt struct {
+	Id   int
 	List []Stmt
 }
 
 type ReturnStmt struct{}
 
 type LoopStmt struct {
+	Init []Stmt
 	Cond Expr
 	Body *BlockStmt
 }
 
 type BranchStmt struct {
 	Tok BranchToken
+}
+
+type EndBlock struct {
+	Id int
 }
 
 type MetaStmt struct {

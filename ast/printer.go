@@ -15,14 +15,16 @@ type Printer struct {
 	out  io.Writer
 	opts PrinterOpts
 	// dirtyLine is true when we have printed something in the current line and we haven't addad a new line yet
-	dirtyLine bool
+	dirtyLine    bool
+	usedBlockIds map[int]bool
 }
 
 func NewPrinter(out io.Writer, opts PrinterOpts) Printer {
 	return Printer{
-		lvl:  0,
-		out:  out,
-		opts: opts,
+		lvl:          0,
+		out:          out,
+		opts:         opts,
+		usedBlockIds: make(map[int]bool),
 	}
 }
 
@@ -161,26 +163,34 @@ func (p *Printer) ReturnStmt(rs *ReturnStmt) {
 }
 
 func (p *Printer) IfStmt(is *IfStmt) {
-	p.Printfln("if %v {", SprintExpr(is.Cond))
-	p.BlockStmt(is.Body)
+	p.Printf("if %v ", SprintExpr(is.Cond))
+	newline := false
+	if is.Else == nil {
+		newline = true
+	}
+	p.BlockStmt(is.Body, newline)
 	switch es := is.Else.(type) {
 	case *BlockStmt:
-		p.Printfln("} else {")
-		p.BlockStmt(es)
-		p.Printfln("}")
+		p.Printf("else ")
+		p.BlockStmt(es, true)
 	case *IfStmt:
-		p.Printf("} else ")
+		p.Printf("else ")
 		p.IfStmt(es)
 	case nil:
-		p.Printfln("}")
 	default:
 		panic("unreachable")
 	}
 }
 
 func (p *Printer) LoopStmt(ls *LoopStmt) {
-	p.Printfln("for %v {", SprintExpr(ls.Cond))
-	p.BlockStmt(ls.Body)
+	p.Printfln("{")
+	p.lvl += 1
+	for _, s := range ls.Init {
+		p.Stmt(s)
+	}
+	p.Printf("for %v ", SprintExpr(ls.Cond))
+	p.BlockStmt(ls.Body, true)
+	p.lvl -= 1
 	p.Printfln("}")
 }
 
@@ -236,9 +246,7 @@ func (p *Printer) Stmt(s Stmt) {
 	case *IfStmt:
 		p.IfStmt(s)
 	case *BlockStmt:
-		p.Printfln("{")
-		p.BlockStmt(s)
-		p.Printfln("}")
+		p.BlockStmt(s, true)
 	case *ReturnStmt:
 		p.ReturnStmt(s)
 	case *MetaStmt:
@@ -247,17 +255,32 @@ func (p *Printer) Stmt(s Stmt) {
 		p.LoopStmt(s)
 	case *BranchStmt:
 		p.BranchStmt(s)
+	case *EndBlock:
+		p.Printfln("goto _endblock%v", s.Id)
+		p.usedBlockIds[s.Id] = true
 	default:
 		panic("TODO")
 	}
 }
 
-func (p *Printer) BlockStmt(bs *BlockStmt) {
+func (p *Printer) BlockStmt(bs *BlockStmt, newline bool) {
+	p.Printfln("{")
 	p.lvl += 1
 	for _, s := range bs.List {
 		p.Stmt(s)
 	}
 	p.lvl -= 1
+	if newline {
+		p.Printfln("}")
+	} else {
+		p.Printf("}")
+	}
+	if p.usedBlockIds[bs.Id] {
+		lvl := p.lvl
+		p.lvl = 0
+		p.Printfln("_endblock%v:", bs.Id)
+		p.lvl = lvl
+	}
 }
 
 func (p *Printer) FuncDecl(fd *FuncDecl) {
@@ -269,9 +292,8 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 	for _, result := range fd.Type.Results {
 		p.Printfln("  %v %v,", result.Name, p.Type(result.Type))
 	}
-	p.Printfln(") {")
-	p.BlockStmt(fd.Body)
-	p.Printfln("}")
+	p.Printf(") ")
+	p.BlockStmt(fd.Body, true)
 	p.Printfln("")
 }
 

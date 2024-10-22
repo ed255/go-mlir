@@ -1,7 +1,7 @@
 package main
 
 func entrypoint(a uint8) uint8 {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 4; i++ {
 		a = a + 1
 		if a > 19 {
 			break

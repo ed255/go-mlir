@@ -160,9 +160,11 @@ type StructValue struct {
 }
 
 type TransformUnroll struct {
-	eval     Evaluator
-	cfg      UnrollConfig
-	breakCnt int
+	eval        Evaluator
+	cfg         UnrollConfig
+	blockCnt    int
+	loopBlockId int
+	iterBlockId int
 }
 
 type UnrollConfig struct {
@@ -177,20 +179,34 @@ func NewTransformUnroll() TransformUnroll {
 	}
 }
 
+func (t *TransformUnroll) NewBlockStmt() *BlockStmt {
+	bs := &BlockStmt{
+		Id: t.blockCnt,
+	}
+	t.blockCnt += 1
+	return bs
+}
+
 func (t *TransformUnroll) BlockStmt(bs *BlockStmt) *BlockStmt {
+	block := t.NewBlockStmt()
 	t.eval.PushBlock()
 	defer t.eval.PopBlock()
 	var ss Stmts
 	for _, stmt := range bs.List {
 		ss.Push(t.Stmt(stmt)...)
 	}
-	return &BlockStmt{
-		List: ss.List,
-	}
+	block.List = ss.List
+	return block
 }
 
-func (t *TransformUnroll) LoopStmt(ls *LoopStmt) []Stmt {
+// TODO: Add init in LoopStmt
+func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
+	bs := t.NewBlockStmt()
+	t.loopBlockId = bs.Id
 	var ss Stmts
+	for _, s := range ls.Init {
+		ss.Push(t.Stmt(s)...)
+	}
 	i := 0
 	for ; i < t.cfg.MaxIter; i++ {
 		cond := t.eval.Eval(ls.Cond)[0].(*PrimValue)
@@ -200,18 +216,20 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) []Stmt {
 		if cond.V == 0 {
 			break
 		}
+		t.iterBlockId = t.blockCnt
 		ss.Push(t.BlockStmt(ls.Body))
 	}
 	if i == t.cfg.MaxIter {
 		panic(fmt.Errorf("Reached MaxIter"))
 	}
-	return ss.List
+	bs.List = ss.List
+	return bs
 }
 
 func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 	switch s := s.(type) {
 	case *LoopStmt:
-		return t.LoopStmt(s)
+		return []Stmt{t.LoopStmt(s)}
 	case *BlockStmt:
 		return []Stmt{t.BlockStmt(s)}
 	case *DeclStmt:
@@ -227,6 +245,25 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 			t.eval.SetVar(l.Name, values[i])
 		}
 		return []Stmt{s}
+	case *IfStmt:
+		return []Stmt{&IfStmt{
+			Cond: s.Cond,
+			Body: t.BlockStmt(s.Body),
+			Else: t.Stmt(s.Else)[0],
+		}}
+	case *BranchStmt:
+		switch s.Tok {
+		case BREAK:
+			return []Stmt{&EndBlock{
+				Id: t.loopBlockId,
+			}}
+		case CONTINUE:
+			return []Stmt{&EndBlock{
+				Id: t.iterBlockId,
+			}}
+		default:
+			panic("unreachable")
+		}
 	default:
 		return []Stmt{s}
 	}
@@ -254,13 +291,15 @@ func (t *TransformUnroll) Transform(pkg *Package) Package {
 		funcs = append(funcs, t.FuncDecl(f))
 	}
 	return Package{
-		Structs: pkg.Structs,
-		Funcs:   funcs,
+		Structs:  pkg.Structs,
+		Funcs:    funcs,
+		BlockCnt: t.blockCnt,
 	}
 }
 
 func unroll(pkg *Package) Package {
 	t := NewTransformUnroll()
+	t.blockCnt = pkg.BlockCnt
 	return t.Transform(pkg)
 }
 
