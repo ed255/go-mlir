@@ -95,8 +95,7 @@ func printExpr(o io.Writer, e Expr, parens bool) {
 	case *Ident:
 		fmt.Fprintf(o, "%v", e.Name)
 	case *BasicLit:
-		typ := e.Type.(*PrimType)
-		if typ.size == 1 {
+		if e.Type.size == 1 {
 			if e.Value == 0 {
 				fmt.Fprintf(o, "false")
 			} else {

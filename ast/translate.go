@@ -231,7 +231,7 @@ func (t *Translator) BasicLit(basicLit *ast.BasicLit) *BasicLit {
 		t.errcheck(err)
 	}
 	return &BasicLit{
-		Type:  typ,
+		Type:  *typ,
 		Value: value,
 	}
 }
@@ -337,7 +337,7 @@ func (t *Translator) IncDecStmt(incDecStmt *ast.IncDecStmt) Stmt {
 	}
 
 	one := &BasicLit{
-		Type:  t.TypeFromExpr(incDecStmt.X),
+		Type:  *t.TypeFromExpr(incDecStmt.X).(*PrimType),
 		Value: 1,
 	}
 	return &AssignStmt{

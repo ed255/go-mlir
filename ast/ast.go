@@ -165,7 +165,7 @@ type Ident struct {
 }
 
 type BasicLit struct {
-	Type  Type // TODO: Replace with PrimType
+	Type  PrimType // TODO: Replace with PrimType
 	Value int64
 }
 

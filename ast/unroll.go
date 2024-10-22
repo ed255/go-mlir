@@ -110,7 +110,7 @@ func (e *Evaluator) Eval(ex Expr) []Value {
 		return []Value{e.EvalBinaryExpr(ex)}
 	case *BasicLit:
 		return []Value{&PrimValue{
-			Type:  *ex.Type.(*PrimType),
+			Type:  ex.Type,
 			V:     ex.Value,
 			Known: true,
 		}}
