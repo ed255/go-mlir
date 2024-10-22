@@ -26,6 +26,7 @@ type Translator struct {
 	structList  []*StructDecl
 	funcList    []*FuncDecl
 	blockCnt    int
+	funcBlockId int
 	lvl         int
 }
 
@@ -36,10 +37,9 @@ func NewTranslator(typeInfo types.Info) Translator {
 	}
 }
 
-func (t *Translator) NewBlockStmt(ss []Stmt) *BlockStmt {
+func (t *Translator) NewBlockStmt() *BlockStmt {
 	bs := &BlockStmt{
-		Id:   t.blockCnt,
-		List: ss,
+		Id: t.blockCnt,
 	}
 	t.blockCnt += 1
 	return bs
@@ -158,13 +158,6 @@ func (t *Translator) Op(op token.Token) Op {
 	}
 }
 
-func (t *Translator) SelectorExpr(selExpr *ast.SelectorExpr) Expr {
-	return &SelectorExpr{
-		X:   t.Expr(selExpr.X),
-		Sel: selExpr.Sel.Name,
-	}
-}
-
 func (t *Translator) CompositeLit(compLit *ast.CompositeLit) Expr {
 	underlying := t.typeInfo.TypeOf(compLit).Underlying()
 	switch underlying.(type) {
@@ -261,7 +254,15 @@ func (t *Translator) Expr(expr ast.Expr) Expr {
 	case *ast.CompositeLit:
 		e = t.CompositeLit(expr)
 	case *ast.SelectorExpr:
-		e = t.SelectorExpr(expr)
+		e = &SelectorExpr{
+			X:   t.Expr(expr.X),
+			Sel: expr.Sel.Name,
+		}
+	case *ast.IndexExpr:
+		e = &IndexExpr{
+			X:     t.Expr(expr.X),
+			Index: t.Expr(expr.Index),
+		}
 	default:
 		panic(fmt.Errorf("unsupported Expr: %+T", expr))
 	}
@@ -404,7 +405,7 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 	default:
 		panic("TODO")
 	}
-	return ss.List
+	return ss
 }
 
 func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []Stmt {
@@ -422,8 +423,9 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []Stmt {
 			Rhs: r,
 		})
 	}
-	ss.Push(&ReturnStmt{})
-	return ss.List
+	// ss.Push(&ReturnStmt{})
+	ss.Push(&EndBlock{Id: t.funcBlockId})
+	return ss
 }
 
 func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
@@ -460,7 +462,7 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
 			})
 		}
 	}
-	return ss.List
+	return ss
 }
 
 func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
@@ -480,7 +482,7 @@ func (t *Translator) DeclStmt(declStmt *ast.DeclStmt) []Stmt {
 	default:
 		panic(fmt.Errorf("unsupported Decl: %T", declStmt))
 	}
-	return ss.List
+	return ss
 }
 
 func (t *Translator) ForStmt(forStmt *ast.ForStmt) Stmt {
@@ -495,13 +497,13 @@ func (t *Translator) ForStmt(forStmt *ast.ForStmt) Stmt {
 	if forStmt.Cond != nil {
 		cond = t.Expr(forStmt.Cond)
 	}
-	var loopBody Stmts
-	loopBody.Push(t.BlockStmt(forStmt.Body))
-	loopBody.Push(post...)
+	body := t.NewBlockStmt()
+	body.List.Push(t.BlockStmt(forStmt.Body))
+	body.List.Push(post...)
 	return &LoopStmt{
 		Init: init,
 		Cond: cond,
-		Body: t.NewBlockStmt(loopBody.List),
+		Body: body,
 	}
 }
 
@@ -528,14 +530,6 @@ func (t *Translator) IfStmt(ifStmt *ast.IfStmt) *IfStmt {
 	}
 }
 
-type Stmts struct {
-	List []Stmt
-}
-
-func (ss *Stmts) Push(s ...Stmt) {
-	ss.List = append(ss.List, s...)
-}
-
 func (t *Translator) Stmt(stmt ast.Stmt) []Stmt {
 	var ss Stmts
 	switch stmt := stmt.(type) {
@@ -558,15 +552,15 @@ func (t *Translator) Stmt(stmt ast.Stmt) []Stmt {
 	default:
 		panic(fmt.Errorf("unsupported Stmt: %+T", stmt))
 	}
-	return ss.List
+	return ss
 }
 
 func (t *Translator) BlockStmt(blockStmt *ast.BlockStmt) *BlockStmt {
-	var ss Stmts
+	block := t.NewBlockStmt()
 	for _, stmt := range blockStmt.List {
-		ss.Push(t.Stmt(stmt)...)
+		block.List.Push(t.Stmt(stmt)...)
 	}
-	return t.NewBlockStmt(ss.List)
+	return block
 }
 
 func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
@@ -597,6 +591,7 @@ func (t *Translator) FuncDecl(funcDecl *ast.FuncDecl) *FuncDecl {
 	t.funcResults = results
 
 	bs := t.BlockStmt(funcDecl.Body)
+	t.funcBlockId = bs.Id
 	return &FuncDecl{
 		Name: funcDecl.Name.Name,
 		Type: FuncType{
@@ -659,9 +654,9 @@ func translate(node ast.Node, typeInfo types.Info) Package {
 	t.FindStructs(file)
 	t.FindFuncs(file)
 	return Package{
-		Structs:  t.structList,
-		Funcs:    t.funcList,
-		BlockCnt: t.blockCnt,
+		Structs: t.structList,
+		Funcs:   t.funcList,
+		// BlockCnt: t.blockCnt,
 	}
 }
 

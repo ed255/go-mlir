@@ -5,9 +5,9 @@
 package ast
 
 type Package struct {
-	Structs  []*StructDecl
-	Funcs    []*FuncDecl
-	BlockCnt int
+	Structs []*StructDecl
+	Funcs   []*FuncDecl
+	// BlockCnt int
 }
 
 type Decl interface {
@@ -92,15 +92,21 @@ func (*BranchStmt) stmtNode() {}
 func (*EndBlock) stmtNode()   {}
 func (*MetaStmt) stmtNode()   {}
 
+type Stmts []Stmt
+
+func (ss *Stmts) Push(s ...Stmt) {
+	*ss = append(*ss, s...)
+}
+
 type BlockStmt struct {
 	Id   int
-	List []Stmt
+	List Stmts
 }
 
 type ReturnStmt struct{}
 
 type LoopStmt struct {
-	Init []Stmt
+	Init Stmts
 	Cond Expr
 	Body *BlockStmt
 }
@@ -153,6 +159,7 @@ func (*BasicLit) exprNode()     {}
 func (*CallExpr) exprNode()     {}
 func (*StructLit) exprNode()    {}
 func (*SelectorExpr) exprNode() {}
+func (*IndexExpr) exprNode()    {}
 
 // func (*CompositeLit) exprNode() {}
 
@@ -190,6 +197,11 @@ type StructLit struct {
 type SelectorExpr struct {
 	X   Expr
 	Sel string
+}
+
+type IndexExpr struct {
+	X     Expr
+	Index Expr
 }
 
 type Meta interface {

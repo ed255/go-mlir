@@ -132,6 +132,11 @@ func printExpr(o io.Writer, e Expr, parens bool) {
 	case *SelectorExpr:
 		printExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, ".%v", e.Sel)
+	case *IndexExpr:
+		printExpr(o, e.X, printExprNeedsParens(e.X))
+		fmt.Fprintf(o, "[")
+		printExpr(o, e.Index, false)
+		fmt.Fprintf(o, "]")
 	default:
 		panic("TODO")
 	}
@@ -204,11 +209,24 @@ func (p *Printer) BranchStmt(bs *BranchStmt) {
 	}
 }
 
+func sprintVarRefChild(vr *VarRef) string {
+	str := ""
+	if vr.Name != "" {
+		if vr.Parent != nil {
+			str += "."
+		}
+		str += vr.Name
+	} else {
+		str += fmt.Sprintf("[%v]", SprintExpr(vr.Index))
+	}
+	return str
+}
+
 func SprintVarRef(vr *VarRef) string {
-	str := vr.Name
+	str := sprintVarRefChild(vr)
 	parent := vr.Parent
 	for parent != nil {
-		str = parent.Name + "." + str
+		str = sprintVarRefChild(parent) + str
 		parent = parent.Parent
 	}
 	return str
@@ -263,7 +281,7 @@ func (p *Printer) Stmt(s Stmt) {
 }
 
 func (p *Printer) BlockStmt(bs *BlockStmt, newline bool) {
-	p.Printfln("{")
+	p.Printfln("{ // b%v", bs.Id)
 	p.lvl += 1
 	for _, s := range bs.List {
 		p.Stmt(s)
@@ -291,8 +309,10 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 	for _, result := range fd.Type.Results {
 		p.Printfln("  %v %v,", result.Name, p.Type(result.Type))
 	}
-	p.Printf(") ")
+	p.Printfln(") {")
 	p.BlockStmt(fd.Body, true)
+	p.Printfln("return")
+	p.Printfln("}")
 	p.Printfln("")
 }
 
@@ -313,6 +333,8 @@ func (p *Printer) Type(t Type) string {
 		}
 	case *StructDecl:
 		return t.Name
+	case *ArrayType:
+		return fmt.Sprintf("[%v]%v", t.Len, p.Type(t.Type))
 	default:
 		panic("TODO")
 	}

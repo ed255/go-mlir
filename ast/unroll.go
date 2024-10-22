@@ -165,6 +165,8 @@ type TransformUnroll struct {
 	blockCnt    int
 	loopBlockId int
 	iterBlockId int
+	// Map from blockIds of input Package to output Package
+	blockIdMap map[int]int
 }
 
 type UnrollConfig struct {
@@ -176,6 +178,7 @@ func NewTransformUnroll() TransformUnroll {
 		cfg: UnrollConfig{
 			MaxIter: 16,
 		},
+		blockIdMap: make(map[int]int),
 	}
 }
 
@@ -189,13 +192,12 @@ func (t *TransformUnroll) NewBlockStmt() *BlockStmt {
 
 func (t *TransformUnroll) BlockStmt(bs *BlockStmt) *BlockStmt {
 	block := t.NewBlockStmt()
+	t.blockIdMap[bs.Id] = block.Id
 	t.eval.PushBlock()
 	defer t.eval.PopBlock()
-	var ss Stmts
 	for _, stmt := range bs.List {
-		ss.Push(t.Stmt(stmt)...)
+		block.List.Push(t.Stmt(stmt)...)
 	}
-	block.List = ss.List
 	return block
 }
 
@@ -203,9 +205,8 @@ func (t *TransformUnroll) BlockStmt(bs *BlockStmt) *BlockStmt {
 func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	bs := t.NewBlockStmt()
 	t.loopBlockId = bs.Id
-	var ss Stmts
 	for _, s := range ls.Init {
-		ss.Push(t.Stmt(s)...)
+		bs.List.Push(t.Stmt(s)...)
 	}
 	i := 0
 	for ; i < t.cfg.MaxIter; i++ {
@@ -217,12 +218,11 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 			break
 		}
 		t.iterBlockId = t.blockCnt
-		ss.Push(t.BlockStmt(ls.Body))
+		bs.List.Push(t.BlockStmt(ls.Body))
 	}
 	if i == t.cfg.MaxIter {
 		panic(fmt.Errorf("Reached MaxIter"))
 	}
-	bs.List = ss.List
 	return bs
 }
 
@@ -242,6 +242,9 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 			if l.Parent != nil {
 				panic("TODO")
 			}
+			if l.Name == "" {
+				panic("TODO")
+			}
 			t.eval.SetVar(l.Name, values[i])
 		}
 		return []Stmt{s}
@@ -250,6 +253,10 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 			Cond: s.Cond,
 			Body: t.BlockStmt(s.Body),
 			Else: t.Stmt(s.Else)[0],
+		}}
+	case *EndBlock:
+		return []Stmt{&EndBlock{
+			Id: t.blockIdMap[s.Id],
 		}}
 	case *BranchStmt:
 		switch s.Tok {
@@ -291,15 +298,15 @@ func (t *TransformUnroll) Transform(pkg *Package) Package {
 		funcs = append(funcs, t.FuncDecl(f))
 	}
 	return Package{
-		Structs:  pkg.Structs,
-		Funcs:    funcs,
-		BlockCnt: t.blockCnt,
+		Structs: pkg.Structs,
+		Funcs:   funcs,
+		// BlockCnt: t.blockCnt,
 	}
 }
 
 func unroll(pkg *Package) Package {
 	t := NewTransformUnroll()
-	t.blockCnt = pkg.BlockCnt
+	// t.blockCnt = pkg.BlockCnt
 	return t.Transform(pkg)
 }
 
