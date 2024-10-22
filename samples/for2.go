@@ -6,6 +6,7 @@ func entrypoint(a uint8) uint8 {
 		if a > 19 {
 			break
 		}
+		a = a + 1
 	}
 	return a
 }

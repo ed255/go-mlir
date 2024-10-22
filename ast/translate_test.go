@@ -14,7 +14,7 @@ func TestTranslate(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	pkg, err := TranslateFile("../samples/for2.go", nil)
+	pkg, err := TranslateFile("../samples/assign2.go", nil)
 	assert.Nil(t, err)
 	// spew.Dump(f)
 	p := NewPrinter(os.Stdout, PrinterOpts{GoCompat: true})
@@ -26,7 +26,7 @@ func TestUnroll(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	pkg, err := TranslateFile("../samples/for.go", nil)
+	pkg, err := TranslateFile("../samples/for2.go", nil)
 	assert.Nil(t, err)
 	p := NewPrinter(os.Stdout, PrinterOpts{GoCompat: true})
 	fmt.Printf("// Translate\n\n")

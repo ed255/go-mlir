@@ -160,8 +160,9 @@ type StructValue struct {
 }
 
 type TransformUnroll struct {
-	eval Evaluator
-	cfg  UnrollConfig
+	eval     Evaluator
+	cfg      UnrollConfig
+	breakCnt int
 }
 
 type UnrollConfig struct {
@@ -199,7 +200,7 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) []Stmt {
 		if cond.V == 0 {
 			break
 		}
-		ss.Push(t.BlockStmt(ls.Body).List...)
+		ss.Push(t.BlockStmt(ls.Body))
 	}
 	if i == t.cfg.MaxIter {
 		panic(fmt.Errorf("Reached MaxIter"))

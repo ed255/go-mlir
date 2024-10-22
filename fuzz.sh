@@ -6,6 +6,7 @@ TIME=5s
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateAdd2$"
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateAdd$"
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateAssign$"
+go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateAssign2$"
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateDefine$"
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateFunc$"
 go test ./fuzz -fuzztime ${TIME} -fuzz="^FuzzTranslateFunc2$"

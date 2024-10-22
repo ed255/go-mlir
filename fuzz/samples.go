@@ -16,6 +16,11 @@ func entrypoint_assign(a uint8) uint8 {
 	return a
 }
 
+func entrypoint_assign2(a uint8, b uint8) uint8 {
+	a, b = b, a
+	return a*2 + b
+}
+
 func entrypoint_define(a uint8) uint8 {
 	b := a + 1
 	return b

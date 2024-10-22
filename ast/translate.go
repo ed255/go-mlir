@@ -365,6 +365,9 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 			})
 		}
 	case token.ASSIGN:
+		if len(assignStmt.Rhs) > 1 {
+			panic(fmt.Errorf("unsupported assign with multiple rhs"))
+		}
 		i := 0
 		for _, rhs := range assignStmt.Rhs {
 			r := t.Expr(rhs)

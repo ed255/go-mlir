@@ -35,6 +35,19 @@ func entrypoint_assign_translate (
 }
 
 
+func entrypoint_assign2_translate (
+  a uint8,
+  b uint8,
+) (
+  _out0 uint8,
+) {
+  a = b
+  b = a
+  _out0 = (a * 2) + b
+  return
+}
+
+
 func entrypoint_define_translate (
   a uint8,
 ) (

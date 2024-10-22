@@ -36,6 +36,16 @@ func FuzzTranslateAssign(f *testing.F) {
 	})
 }
 
+func FuzzTranslateAssign2(f *testing.F) {
+	f.Add(uint8(128), uint8(128))
+	f.Fuzz(func(t *testing.T, a uint8, b uint8) {
+		out0 := entrypoint_assign2(a, b)
+		out0_translate := entrypoint_assign2_translate(a, b)
+		
+		assert.Equal(t, out0, out0_translate)
+	})
+}
+
 func FuzzTranslateDefine(f *testing.F) {
 	f.Add(uint8(128))
 	f.Fuzz(func(t *testing.T, a uint8) {
