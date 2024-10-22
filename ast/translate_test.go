@@ -14,7 +14,7 @@ func TestTranslate(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	pkg, err := TranslateFile("../samples/assign2.go", nil)
+	pkg, err := TranslateFile("../samples/array.go", nil)
 	assert.Nil(t, err)
 	// spew.Dump(f)
 	p := NewPrinter(os.Stdout, PrinterOpts{GoCompat: true})

@@ -103,6 +103,11 @@ func (t *Translator) Type(typ types.Type) Type {
 		default:
 			panic(fmt.Errorf("unsupported Underlying Type %+#v", underlying))
 		}
+	case *types.Array:
+		return &ArrayType{
+			Len:  typ.Len(),
+			Type: t.Type(typ.Elem()),
+		}
 	default:
 		panic(fmt.Errorf("unsupported Type %+#v", typ))
 	}
@@ -276,6 +281,9 @@ func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 	case *ast.SelectorExpr:
 		parent := t.VarRefFromExpr(expr.X)
 		return VarRef{Parent: &parent, Name: expr.Sel.Name}
+	case *ast.IndexExpr:
+		parent := t.VarRefFromExpr(expr.X)
+		return VarRef{Parent: &parent, Index: t.Expr(expr.Index)}
 	default:
 		panic(fmt.Errorf("unsupported Expr for VarRef: %+T", expr))
 	}

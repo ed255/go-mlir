@@ -32,8 +32,14 @@ type PrimType struct {
 	size   int
 }
 
+type ArrayType struct {
+	Len  int64
+	Type Type
+}
+
 func (*PrimType) typeNode()   {}
 func (*StructDecl) typeNode() {}
+func (*ArrayType) typeNode()  {}
 
 func NewPrimType(signed bool, size int) PrimType {
 	return PrimType{signed: signed, size: size}
@@ -123,10 +129,12 @@ type IfStmt struct {
 
 // Variable Reference for assignment
 type VarRef struct {
-	// If Parent != nil then it contains the reference struct and Name is
-	// the field
+	// If Parent != nil then it contains the reference Struct/Array and
+	// Name/Index is the field
 	Parent *VarRef
-	Name   string
+	// If Name == "", then Index is an Array index
+	Name  string
+	Index Expr
 }
 
 type AssignStmt struct {
