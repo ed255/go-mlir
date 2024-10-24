@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"runtime/debug"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 type Evaluator struct {
@@ -16,8 +14,8 @@ func (e *Evaluator) CurBlock() *Block {
 	return &e.blocks[len(e.blocks)-1]
 }
 
-func (e *Evaluator) PushBlock() {
-	e.blocks = append(e.blocks, Block{vars: make(map[string]Value)})
+func (e *Evaluator) PushBlock(id int) {
+	e.blocks = append(e.blocks, Block{id: id, vars: make(map[string]Value)})
 }
 
 func (e *Evaluator) PopBlock() *Block {
@@ -30,29 +28,43 @@ func (e *Evaluator) AddVar(name string, typ Type, known bool) {
 	e.CurBlock().vars[name] = NewValue(typ, known)
 }
 
-func (e *Evaluator) GetVar(name string) Value {
+func (e *Evaluator) getVar(name string) (int, Value) {
 	for i := 0; i < len(e.blocks); i++ {
 		depth := len(e.blocks) - 1 - i
 		block := e.blocks[depth]
 		v, ok := block.vars[name]
 		if ok {
-			return v
+			return depth, v
 		}
 	}
 	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
 }
 
-func (e *Evaluator) SetVar(name string, v Value) {
+func (e *Evaluator) GetVar(name string) Value {
+	_, v := e.getVar(name)
+	return v
+}
+
+// SetVar finds the closest scope where variable "name" is defined and sets it to v.
+// If the blocks path involves a branching block, the value is set to unknown.
+func (e *Evaluator) SetVar(name string, v Value) Value {
+	branchVar := false
 	for i := 0; i < len(e.blocks); i++ {
 		depth := len(e.blocks) - 1 - i
 		block := e.blocks[depth]
 		_, ok := block.vars[name]
+		// If we traverse a branching block which is not the block
+		// where the var is defined, then we no longer know what value
+		// the var will take.
+		if !branchVar && block.branch && !ok {
+			branchVar = true
+			v.SetUnknown()
+		}
 		if ok {
 			block.vars[name] = v
-			return
+			return v
 		}
 	}
-	spew.Dump(e.blocks)
 	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
 }
 
@@ -60,10 +72,10 @@ func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
 	xValue := e.Eval(be.X)[0].(*PrimValue)
 	yValue := e.Eval(be.Y)[0].(*PrimValue)
 	known := true
-	if !xValue.Known || !yValue.Known {
+	if !xValue.Known() || !yValue.Known() {
 		known = false
 	}
-	x, y := xValue.V, yValue.V
+	x, y := xValue.v, yValue.v
 	var z int64
 	isBool := false
 	typ := xValue.Type
@@ -90,16 +102,25 @@ func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
 			z = 1
 		}
 		isBool = true
+	case GTR:
+		if (signed && x > y) || (!signed && uint64(x) > uint64(y)) {
+			z = 1
+		}
+		isBool = true
 	default:
 		panic(fmt.Errorf("TODO Op: %v", ops[be.Op]))
+	}
+	// Mask according to the bit size
+	if typ.size < 64 {
+		z = z & ((1 << typ.size) - 1)
 	}
 
 	if isBool {
 		typ = Bool
 	}
 	return &PrimValue{
-		Known: known,
-		V:     z,
+		known: known,
+		v:     z,
 		Type:  typ,
 	}
 }
@@ -111,29 +132,33 @@ func (e *Evaluator) Eval(ex Expr) []Value {
 	case *BasicLit:
 		return []Value{&PrimValue{
 			Type:  ex.Type,
-			V:     ex.Value,
-			Known: true,
+			v:     ex.Value,
+			known: true,
 		}}
 	case *Ident:
 		return []Value{e.GetVar(ex.Name)}
 	default:
-		panic("TODO")
+		panic(fmt.Sprintf("TODO %+T", ex))
 	}
 }
 
 type Block struct {
-	vars map[string]Value
+	id     int
+	vars   map[string]Value
+	branch bool
 }
 
 type Value interface {
 	valueNode()
+	SetUnknown()
+	Known() bool
 }
 
 // If known is true the value will be set to 0 (default go value)
 func NewValue(typ Type, known bool) Value {
 	switch typ := typ.(type) {
 	case *PrimType:
-		return &PrimValue{Known: known, V: 0, Type: *typ}
+		return &PrimValue{known: known, v: 0, Type: *typ}
 	case *StructDecl:
 		v := make(map[string]Value)
 		for _, field := range typ.Fields {
@@ -149,14 +174,53 @@ func (*PrimValue) valueNode()   {}
 func (*StructValue) valueNode() {}
 
 type PrimValue struct {
-	Known bool
-	V     int64
+	known bool
+	v     int64
 	Type  PrimType
+}
+
+func (v *PrimValue) V() int64 {
+	if !v.known {
+		panic("unreachable: value is unknown")
+	}
+	return v.v
+}
+
+func (v *PrimValue) SetUnknown() {
+	v.known = false
+}
+
+func (v *PrimValue) Known() bool {
+	return v.known
+}
+
+func (v *PrimValue) String() string {
+	if !v.known {
+		return "unknown"
+	} else if v.Type.signed {
+		return fmt.Sprintf("%v", v.v)
+	} else {
+		return fmt.Sprintf("%v", uint64(v.v))
+	}
 }
 
 type StructValue struct {
 	V    map[string]Value
 	Type *StructDecl
+}
+
+func (v *StructValue) SetUnknown() {
+	for _, value := range v.V {
+		value.SetUnknown()
+	}
+}
+
+func (v *StructValue) Known() bool {
+	known := true
+	for _, value := range v.V {
+		known = known && value.Known()
+	}
+	return known
 }
 
 type TransformUnroll struct {
@@ -165,6 +229,8 @@ type TransformUnroll struct {
 	blockCnt    int
 	loopBlockId int
 	iterBlockId int
+	// Set to true by a break that unconditionally terminates a loop
+	breakLoop bool
 	// Map from blockIds of input Package to output Package
 	blockIdMap map[int]int
 }
@@ -190,54 +256,58 @@ func (t *TransformUnroll) NewBlockStmt() *BlockStmt {
 	return bs
 }
 
-func (t *TransformUnroll) BlockStmt(bs *BlockStmt) *BlockStmt {
+func (t *TransformUnroll) BlockStmt(bs *BlockStmt, branch bool) *BlockStmt {
 	block := t.NewBlockStmt()
 	t.blockIdMap[bs.Id] = block.Id
-	t.eval.PushBlock()
+	t.eval.PushBlock(block.Id)
+	t.eval.CurBlock().branch = branch
 	defer t.eval.PopBlock()
 	for _, stmt := range bs.List {
-		block.List.Push(t.Stmt(stmt)...)
+		block.List.Push(t.Stmt(stmt, false)...)
 	}
 	return block
 }
 
-// TODO: Add init in LoopStmt
 func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	bs := t.NewBlockStmt()
 	t.loopBlockId = bs.Id
 	for _, s := range ls.Init {
-		bs.List.Push(t.Stmt(s)...)
+		bs.List.Push(t.Stmt(s, false)...)
 	}
 	i := 0
 	for ; i < t.cfg.MaxIter; i++ {
-		cond := t.eval.Eval(ls.Cond)[0].(*PrimValue)
-		if !cond.Known {
-			panic(fmt.Errorf("Unable to evaluate loop condition"))
-		}
-		if cond.V == 0 {
-			break
+		if ls.Cond != nil {
+			cond := t.eval.Eval(ls.Cond)[0].(*PrimValue)
+			if cond.Known() && cond.V() == 0 {
+				break
+			}
 		}
 		t.iterBlockId = t.blockCnt
-		bs.List.Push(t.BlockStmt(ls.Body))
+		bs.List.Push(t.BlockStmt(ls.Body, false))
+		if t.breakLoop {
+			t.breakLoop = false // reset
+			break
+		}
 	}
 	if i == t.cfg.MaxIter {
-		panic(fmt.Errorf("Reached MaxIter"))
+		panic(fmt.Errorf("Unroll: reached MaxIter=%v", t.cfg.MaxIter))
 	}
 	return bs
 }
 
-func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
+func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 	switch s := s.(type) {
 	case *LoopStmt:
 		return []Stmt{t.LoopStmt(s)}
 	case *BlockStmt:
-		return []Stmt{t.BlockStmt(s)}
+		return []Stmt{t.BlockStmt(s, branch)}
 	case *DeclStmt:
 		varDecl := s.Decl.(*VarDecl)
 		t.eval.AddVar(varDecl.Name, varDecl.Type, true)
 		return []Stmt{s}
 	case *AssignStmt:
 		values := t.eval.Eval(s.Rhs)
+		var ss Stmts
 		for i, l := range s.Lhs {
 			if l.Parent != nil {
 				panic("TODO")
@@ -245,14 +315,32 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 			if l.Name == "" {
 				panic("TODO")
 			}
-			t.eval.SetVar(l.Name, values[i])
+			v := t.eval.SetVar(l.Name, values[i])
+			if v.Known() {
+				ss.Push(&MetaStmt{
+					&Comment{Value: fmt.Sprintf("%v = %v",
+						l.Name, v)},
+				})
+			}
 		}
-		return []Stmt{s}
+		ss.Push(s)
+		return ss
 	case *IfStmt:
+		cond := t.eval.Eval(s.Cond)[0].(*PrimValue)
+		// If we can evaluate the if condition, we remove the if already
+		if cond.Known() {
+			if cond.V() == 1 {
+				return []Stmt{t.BlockStmt(s.Body, branch)}
+			} else if s.Else != nil {
+				return t.Stmt(s.Else, branch)
+			} else {
+				return []Stmt{}
+			}
+		}
 		return []Stmt{&IfStmt{
 			Cond: s.Cond,
-			Body: t.BlockStmt(s.Body),
-			Else: t.Stmt(s.Else)[0],
+			Body: t.BlockStmt(s.Body, true),
+			Else: t.Stmt(s.Else, true)[0],
 		}}
 	case *EndBlock:
 		return []Stmt{&EndBlock{
@@ -261,6 +349,23 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 	case *BranchStmt:
 		switch s.Tok {
 		case BREAK:
+			branchBreak := false
+			for i := 0; i < len(t.eval.blocks); i++ {
+				depth := len(t.eval.blocks) - 1 - i
+				block := t.eval.blocks[depth]
+				if block.id == t.loopBlockId {
+					break
+				}
+				if block.branch {
+					branchBreak = true
+					break
+				}
+			}
+			if !branchBreak {
+				t.breakLoop = true
+			}
+			// TODO: If this happens in a non-branch block we
+			// propagate up to the for block
 			return []Stmt{&EndBlock{
 				Id: t.loopBlockId,
 			}}
@@ -277,7 +382,8 @@ func (t *TransformUnroll) Stmt(s Stmt) []Stmt {
 }
 
 func (t *TransformUnroll) FuncDecl(fd *FuncDecl) *FuncDecl {
-	t.eval.PushBlock()
+	t.eval.PushBlock(t.blockCnt)
+	t.blockCnt += 1
 	for _, f := range fd.Type.Params {
 		t.eval.AddVar(f.Name, f.Type, false)
 	}
@@ -288,7 +394,7 @@ func (t *TransformUnroll) FuncDecl(fd *FuncDecl) *FuncDecl {
 	return &FuncDecl{
 		Name: fd.Name,
 		Type: fd.Type,
-		Body: t.BlockStmt(fd.Body),
+		Body: t.BlockStmt(fd.Body, false),
 	}
 }
 

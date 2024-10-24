@@ -423,7 +423,6 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []Stmt {
 			Rhs: r,
 		})
 	}
-	// ss.Push(&ReturnStmt{})
 	ss.Push(&EndBlock{Id: t.funcBlockId})
 	return ss
 }

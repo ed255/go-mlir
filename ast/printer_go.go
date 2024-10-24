@@ -6,35 +6,29 @@ import (
 	"strings"
 )
 
-type PrinterOpts struct {
-	GoCompat bool
-}
-
-type Printer struct {
-	lvl  int
-	out  io.Writer
-	opts PrinterOpts
+type PrinterGo struct {
+	lvl int
+	out io.Writer
 	// dirtyLine is true when we have printed something in the current line and we haven't addad a new line yet
 	dirtyLine    bool
 	usedBlockIds map[int]bool
 }
 
-func NewPrinter(out io.Writer, opts PrinterOpts) Printer {
-	return Printer{
+func NewPrinterGo(out io.Writer) PrinterGo {
+	return PrinterGo{
 		lvl:          0,
 		out:          out,
-		opts:         opts,
 		usedBlockIds: make(map[int]bool),
 	}
 }
 
-func (p *Printer) errcheck(err error) {
+func (p *PrinterGo) errcheck(err error) {
 	if err != nil {
 		panic(err)
 	}
 }
 
-func (p *Printer) Printf(format string, a ...any) {
+func (p *PrinterGo) Printf(format string, a ...any) {
 	indent := ""
 	if !p.dirtyLine {
 		indent = strings.Repeat("  ", p.lvl)
@@ -44,16 +38,16 @@ func (p *Printer) Printf(format string, a ...any) {
 	p.dirtyLine = true
 }
 
-func (p *Printer) Printfln(format string, a ...any) {
+func (p *PrinterGo) Printfln(format string, a ...any) {
 	p.Printf(format+"\n", a...)
 	p.dirtyLine = false
 }
 
-func (p *Printer) VarDecl(vd *VarDecl) {
+func (p *PrinterGo) VarDecl(vd *VarDecl) {
 	p.Printfln("var %v %v", vd.Name, p.Type(vd.Type))
 }
 
-func (p *Printer) DeclStmt(ds *DeclStmt) {
+func (p *PrinterGo) DeclStmt(ds *DeclStmt) {
 	switch d := ds.Decl.(type) {
 	case *VarDecl:
 		p.VarDecl(d)
@@ -75,23 +69,23 @@ func printExprNeedsParens(e Expr) bool {
 
 func printCondExprGo(o io.Writer, ce *CondExpr, lhs string) {
 	fmt.Fprintf(o, "if ")
-	printExpr(o, ce.Cond, false)
+	printGoExpr(o, ce.Cond, false)
 	fmt.Fprintf(o, " { %v = ", lhs)
-	printExpr(o, ce.CaseTrue, false)
+	printGoExpr(o, ce.CaseTrue, false)
 	fmt.Fprintf(o, " } else { %v = ", lhs)
-	printExpr(o, ce.CaseFalse, false)
+	printGoExpr(o, ce.CaseFalse, false)
 	fmt.Fprintf(o, " }")
 }
 
-func printExpr(o io.Writer, e Expr, parens bool) {
+func printGoExpr(o io.Writer, e Expr, parens bool) {
 	if parens {
 		fmt.Fprintf(o, "(")
 	}
 	switch e := e.(type) {
 	case *BinaryExpr:
-		printExpr(o, e.X, printExprNeedsParens(e.X))
+		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, " %v ", ops[e.Op])
-		printExpr(o, e.Y, printExprNeedsParens(e.Y))
+		printGoExpr(o, e.Y, printExprNeedsParens(e.Y))
 	case *Ident:
 		fmt.Fprintf(o, "%v", e.Name)
 	case *BasicLit:
@@ -102,21 +96,21 @@ func printExpr(o io.Writer, e Expr, parens bool) {
 				fmt.Fprintf(o, "true")
 			}
 		} else {
-			fmt.Fprintf(o, "%v", e.Value)
+			if e.Type.signed {
+				fmt.Fprintf(o, "%v", e.Value)
+			} else {
+				fmt.Fprintf(o, "%v", uint64(e.Value))
+			}
 		}
 	case *CondExpr:
-		printExpr(o, e.Cond, printExprNeedsParens(e.Cond))
-		fmt.Fprintf(o, " ? ")
-		printExpr(o, e.CaseTrue, printExprNeedsParens(e.CaseTrue))
-		fmt.Fprintf(o, " : ")
-		printExpr(o, e.CaseFalse, printExprNeedsParens(e.CaseFalse))
+		panic("unsupported by go")
 	case *CallExpr:
 		fmt.Fprintf(o, "%v(", e.Fun)
 		for i, arg := range e.Args {
 			if i != 0 {
 				fmt.Fprintf(o, ", ")
 			}
-			printExpr(o, arg, false)
+			printGoExpr(o, arg, false)
 		}
 		fmt.Fprintf(o, ")")
 	case *StructLit:
@@ -126,32 +120,32 @@ func printExpr(o io.Writer, e Expr, parens bool) {
 				fmt.Fprintf(o, ", ")
 			}
 			fmt.Fprintf(o, "%v: ", kv.Key)
-			printExpr(o, kv.Value, false)
+			printGoExpr(o, kv.Value, false)
 		}
 		fmt.Fprintf(o, "}")
 	case *SelectorExpr:
-		printExpr(o, e.X, printExprNeedsParens(e.X))
+		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, ".%v", e.Sel)
 	case *IndexExpr:
-		printExpr(o, e.X, printExprNeedsParens(e.X))
+		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, "[")
-		printExpr(o, e.Index, false)
+		printGoExpr(o, e.Index, false)
 		fmt.Fprintf(o, "]")
 	default:
-		panic("TODO")
+		panic(fmt.Sprintf("TODO %+T", e))
 	}
 	if parens {
 		fmt.Fprintf(o, ")")
 	}
 }
 
-func SprintExpr(e Expr) string {
+func SprintGoExpr(e Expr) string {
 	var exprStr strings.Builder
-	printExpr(&exprStr, e, false)
+	printGoExpr(&exprStr, e, false)
 	return exprStr.String()
 }
 
-func (p *Printer) MetaStmt(m *MetaStmt) {
+func (p *PrinterGo) MetaStmt(m *MetaStmt) {
 	switch m := m.Meta.(type) {
 	case *LvlDelta:
 		p.lvl += m.Delta
@@ -162,12 +156,8 @@ func (p *Printer) MetaStmt(m *MetaStmt) {
 	}
 }
 
-func (p *Printer) ReturnStmt(rs *ReturnStmt) {
-	p.Printfln("return")
-}
-
-func (p *Printer) IfStmt(is *IfStmt) {
-	p.Printf("if %v ", SprintExpr(is.Cond))
+func (p *PrinterGo) IfStmt(is *IfStmt) {
+	p.Printf("if %v ", SprintGoExpr(is.Cond))
 	newline := false
 	if is.Else == nil {
 		newline = true
@@ -186,19 +176,22 @@ func (p *Printer) IfStmt(is *IfStmt) {
 	}
 }
 
-func (p *Printer) LoopStmt(ls *LoopStmt) {
+func (p *PrinterGo) LoopStmt(ls *LoopStmt) {
 	p.Printfln("{")
 	p.lvl += 1
 	for _, s := range ls.Init {
 		p.Stmt(s)
 	}
-	p.Printf("for %v ", SprintExpr(ls.Cond))
+	p.Printf("for ")
+	if ls.Cond != nil {
+		p.Printf("%v ", SprintGoExpr(ls.Cond))
+	}
 	p.BlockStmt(ls.Body, true)
 	p.lvl -= 1
 	p.Printfln("}")
 }
 
-func (p *Printer) BranchStmt(bs *BranchStmt) {
+func (p *PrinterGo) BranchStmt(bs *BranchStmt) {
 	switch bs.Tok {
 	case BREAK:
 		p.Printfln("break")
@@ -209,7 +202,7 @@ func (p *Printer) BranchStmt(bs *BranchStmt) {
 	}
 }
 
-func sprintVarRefChild(vr *VarRef) string {
+func sprintGoVarRefChild(vr *VarRef) string {
 	str := ""
 	if vr.Name != "" {
 		if vr.Parent != nil {
@@ -217,44 +210,44 @@ func sprintVarRefChild(vr *VarRef) string {
 		}
 		str += vr.Name
 	} else {
-		str += fmt.Sprintf("[%v]", SprintExpr(vr.Index))
+		str += fmt.Sprintf("[%v]", SprintGoExpr(vr.Index))
 	}
 	return str
 }
 
-func SprintVarRef(vr *VarRef) string {
-	str := sprintVarRefChild(vr)
+func SprintGoVarRef(vr *VarRef) string {
+	str := sprintGoVarRefChild(vr)
 	parent := vr.Parent
 	for parent != nil {
-		str = sprintVarRefChild(parent) + str
+		str = sprintGoVarRefChild(parent) + str
 		parent = parent.Parent
 	}
 	return str
 }
 
-func (p *Printer) AssignStmt(as *AssignStmt) {
+func (p *PrinterGo) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
 	condExpr, ok := as.Rhs.(*CondExpr)
-	if ok && p.opts.GoCompat {
+	if ok {
 		if len(as.Lhs) != 1 {
 			panic("unreachable")
 		}
 		// go-friendly ternary operator
-		printCondExprGo(&exprStr, condExpr, SprintVarRef(&as.Lhs[0]))
+		printCondExprGo(&exprStr, condExpr, SprintGoVarRef(&as.Lhs[0]))
 		p.Printfln("%v", exprStr.String())
 	} else {
-		printExpr(&exprStr, as.Rhs, false)
+		printGoExpr(&exprStr, as.Rhs, false)
 		for i, l := range as.Lhs {
 			if i != 0 {
 				p.Printf(", ")
 			}
-			p.Printf("%v", SprintVarRef(&l))
+			p.Printf("%v", SprintGoVarRef(&l))
 		}
 		p.Printfln(" = %v", exprStr.String())
 	}
 }
 
-func (p *Printer) Stmt(s Stmt) {
+func (p *PrinterGo) Stmt(s Stmt) {
 	switch s := s.(type) {
 	case *DeclStmt:
 		p.DeclStmt(s)
@@ -264,8 +257,6 @@ func (p *Printer) Stmt(s Stmt) {
 		p.IfStmt(s)
 	case *BlockStmt:
 		p.BlockStmt(s, true)
-	case *ReturnStmt:
-		p.ReturnStmt(s)
 	case *MetaStmt:
 		p.MetaStmt(s)
 	case *LoopStmt:
@@ -276,11 +267,11 @@ func (p *Printer) Stmt(s Stmt) {
 		p.Printfln("goto _endblock%v", s.Id)
 		p.usedBlockIds[s.Id] = true
 	default:
-		panic("TODO")
+		panic(fmt.Sprintf("TODO %+T", s))
 	}
 }
 
-func (p *Printer) BlockStmt(bs *BlockStmt, newline bool) {
+func (p *PrinterGo) BlockStmt(bs *BlockStmt, newline bool) {
 	p.Printfln("{ // b%v", bs.Id)
 	p.lvl += 1
 	for _, s := range bs.List {
@@ -300,7 +291,7 @@ func (p *Printer) BlockStmt(bs *BlockStmt, newline bool) {
 	}
 }
 
-func (p *Printer) FuncDecl(fd *FuncDecl) {
+func (p *PrinterGo) FuncDecl(fd *FuncDecl) {
 	p.Printfln("func %v (", fd.Name)
 	for _, param := range fd.Type.Params {
 		p.Printfln("  %v %v,", param.Name, p.Type(param.Type))
@@ -316,7 +307,7 @@ func (p *Printer) FuncDecl(fd *FuncDecl) {
 	p.Printfln("")
 }
 
-func (p *Printer) Type(t Type) string {
+func (p *PrinterGo) Type(t Type) string {
 	switch t := t.(type) {
 	case *PrimType:
 		if t.size == 1 {
@@ -340,7 +331,7 @@ func (p *Printer) Type(t Type) string {
 	}
 }
 
-func (p *Printer) Decl(d Decl) {
+func (p *PrinterGo) Decl(d Decl) {
 	switch d := d.(type) {
 	case *FuncDecl:
 		p.FuncDecl(d)
@@ -351,7 +342,7 @@ func (p *Printer) Decl(d Decl) {
 	}
 }
 
-func (p *Printer) Package(pkg *Package) {
+func (p *PrinterGo) Package(pkg *Package) {
 	for _, f := range pkg.Funcs {
 		p.FuncDecl(f)
 	}

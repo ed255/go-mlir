@@ -86,7 +86,6 @@ func (*DeclStmt) stmtNode()   {}
 func (*AssignStmt) stmtNode() {}
 func (*IfStmt) stmtNode()     {}
 func (*BlockStmt) stmtNode()  {}
-func (*ReturnStmt) stmtNode() {}
 func (*LoopStmt) stmtNode()   {}
 func (*BranchStmt) stmtNode() {}
 func (*EndBlock) stmtNode()   {}
@@ -102,8 +101,6 @@ type BlockStmt struct {
 	Id   int
 	List Stmts
 }
-
-type ReturnStmt struct{}
 
 type LoopStmt struct {
 	Init Stmts
