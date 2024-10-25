@@ -165,10 +165,10 @@ func (p *PrinterGo) IfStmt(is *IfStmt) {
 	p.BlockStmt(is.Body, newline)
 	switch es := is.Else.(type) {
 	case *BlockStmt:
-		p.Printf("else ")
+		p.Printf(" else ")
 		p.BlockStmt(es, true)
 	case *IfStmt:
-		p.Printf("else ")
+		p.Printf(" else ")
 		p.IfStmt(es)
 	case nil:
 	default:
@@ -229,9 +229,7 @@ func (p *PrinterGo) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
 	condExpr, ok := as.Rhs.(*CondExpr)
 	if ok {
-		if len(as.Lhs) != 1 {
-			panic("unreachable")
-		}
+		assert(len(as.Lhs) != 1)
 		// go-friendly ternary operator
 		printCondExprGo(&exprStr, condExpr, SprintGoVarRef(&as.Lhs[0]))
 		p.Printfln("%v", exprStr.String())

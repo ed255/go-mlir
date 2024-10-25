@@ -4,18 +4,23 @@ import (
 	"bytes"
 	"fmt"
 	"runtime/debug"
+	"slices"
 )
 
 type Evaluator struct {
-	blocks []Block
+	blocks []*Block
 }
 
 func (e *Evaluator) CurBlock() *Block {
-	return &e.blocks[len(e.blocks)-1]
+	return e.blocks[len(e.blocks)-1]
 }
 
 func (e *Evaluator) PushBlock(id int) {
-	e.blocks = append(e.blocks, Block{id: id, vars: make(map[string]Value)})
+	var parent *Block
+	if len(e.blocks) > 0 {
+		parent = e.CurBlock()
+	}
+	e.blocks = append(e.blocks, &Block{id: id, Parent: parent, vars: make(map[string]Value)})
 }
 
 func (e *Evaluator) PopBlock() *Block {
@@ -28,44 +33,59 @@ func (e *Evaluator) AddVar(name string, typ Type, known bool) {
 	e.CurBlock().vars[name] = NewValue(typ, known)
 }
 
-func (e *Evaluator) getVar(name string) (int, Value) {
+// func (e *Evaluator) getVar(name string) (int, Value) {
+// 	for i := 0; i < len(e.blocks); i++ {
+// 		depth := len(e.blocks) - 1 - i
+// 		block := e.blocks[depth]
+// 		v, ok := block.vars[name]
+// 		if ok {
+// 			return depth, v
+// 		}
+// 	}
+// 	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
+// }
+
+// getVar returns:
+// - depth (block depth were var is declared)
+// - list of branching blocks in the path (from shallow to deepest, excluding
+// the block where the var is defined)
+// - var
+func (e *Evaluator) getVar(name string) (int, []*Block, Value) {
+	var branchBlocks []*Block
 	for i := 0; i < len(e.blocks); i++ {
 		depth := len(e.blocks) - 1 - i
 		block := e.blocks[depth]
 		v, ok := block.vars[name]
 		if ok {
-			return depth, v
+			slices.Reverse(branchBlocks)
+			return depth, branchBlocks, v
+		}
+		// collect branching blocks in the path, excluding the block
+		// where the var is defined
+		if block.branch == true {
+			branchBlocks = append(branchBlocks, block)
 		}
 	}
-	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
+	panic(fmt.Errorf("Var %v not found in any block", name))
 }
 
 func (e *Evaluator) GetVar(name string) Value {
-	_, v := e.getVar(name)
+	_, _, v := e.getVar(name)
 	return v
 }
 
 // SetVar finds the closest scope where variable "name" is defined and sets it to v.
-// If the blocks path involves a branching block, the value is set to unknown.
-func (e *Evaluator) SetVar(name string, v Value) Value {
-	branchVar := false
-	for i := 0; i < len(e.blocks); i++ {
-		depth := len(e.blocks) - 1 - i
-		block := e.blocks[depth]
-		_, ok := block.vars[name]
-		// If we traverse a branching block which is not the block
-		// where the var is defined, then we no longer know what value
-		// the var will take.
-		if !branchVar && block.branch && !ok {
-			branchVar = true
-			v.SetUnknown()
-		}
-		if ok {
-			block.vars[name] = v
-			return v
-		}
+func (e *Evaluator) SetVar(name string, v Value) {
+	depth, branchBlocks, v0 := e.getVar(name)
+	if len(branchBlocks) > 0 && depth != len(e.blocks)-1 {
+		// If we're in a branch and the var was defined before the branching we include it in the branchVars of the parent block so that when the current branches (if and else) terminate we can set the original var to unknown.
+		lastBranchBlock := branchBlocks[len(branchBlocks)-1]
+		lastBranchBlock.vars[name] = v
+		parentBlock := lastBranchBlock.Parent
+		parentBlock.branchVars = append(parentBlock.branchVars, v0)
+	} else {
+		v0.Set(v)
 	}
-	panic(fmt.Errorf("Var \"%v\" not found in any block", name))
 }
 
 func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
@@ -143,14 +163,21 @@ func (e *Evaluator) Eval(ex Expr) []Value {
 }
 
 type Block struct {
-	id     int
-	vars   map[string]Value
+	id int
+	// Map from src var name to Value
+	vars map[string]Value
+	// true if we're in a branch block
 	branch bool
+	// List of vars that have branched in children Blocks
+	branchVars []Value
+	// Pointer to parent Block
+	Parent *Block
 }
 
 type Value interface {
 	valueNode()
-	SetUnknown()
+	AsUnknown() Value
+	Set(Value)
 	Known() bool
 }
 
@@ -180,14 +207,19 @@ type PrimValue struct {
 }
 
 func (v *PrimValue) V() int64 {
-	if !v.known {
-		panic("unreachable: value is unknown")
-	}
+	assert(v.known, "unreachable: value is unknown")
 	return v.v
 }
 
-func (v *PrimValue) SetUnknown() {
-	v.known = false
+func (v *PrimValue) AsUnknown() Value {
+	return &PrimValue{
+		known: false,
+		Type:  v.Type,
+	}
+}
+
+func (v *PrimValue) Set(v1 Value) {
+	*v = *v1.(*PrimValue)
 }
 
 func (v *PrimValue) Known() bool {
@@ -209,10 +241,19 @@ type StructValue struct {
 	Type *StructDecl
 }
 
-func (v *StructValue) SetUnknown() {
-	for _, value := range v.V {
-		value.SetUnknown()
+func (v *StructValue) AsUnknown() Value {
+	kv := make(map[string]Value)
+	for key, value := range v.V {
+		kv[key] = value.AsUnknown()
 	}
+	return &StructValue{
+		V:    kv,
+		Type: v.Type,
+	}
+}
+
+func (v *StructValue) Set(v1 Value) {
+	*v = *v1.(*StructValue)
 }
 
 func (v *StructValue) Known() bool {
@@ -257,15 +298,15 @@ func (t *TransformUnroll) NewBlockStmt() *BlockStmt {
 }
 
 func (t *TransformUnroll) BlockStmt(bs *BlockStmt, branch bool) *BlockStmt {
-	block := t.NewBlockStmt()
-	t.blockIdMap[bs.Id] = block.Id
-	t.eval.PushBlock(block.Id)
+	bs1 := t.NewBlockStmt()
+	t.blockIdMap[bs.Id] = bs1.Id
+	t.eval.PushBlock(bs1.Id)
 	t.eval.CurBlock().branch = branch
 	defer t.eval.PopBlock()
 	for _, stmt := range bs.List {
-		block.List.Push(t.Stmt(stmt, false)...)
+		bs1.List.Push(t.Stmt(stmt, false)...)
 	}
-	return block
+	return bs1
 }
 
 func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
@@ -295,6 +336,34 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	return bs
 }
 
+func (t *TransformUnroll) IfStmt(is *IfStmt, branch bool) []Stmt {
+	cond := t.eval.Eval(is.Cond)[0].(*PrimValue)
+	// If we can evaluate the if condition, we remove the if already
+	if cond.Known() {
+		if cond.V() == 1 {
+			return []Stmt{t.BlockStmt(is.Body, branch)}
+		} else if is.Else != nil {
+			return t.Stmt(is.Else, branch)
+		} else {
+			return []Stmt{}
+		}
+	}
+	bodyBlockStmt := t.BlockStmt(is.Body, true)
+	elseStmt := t.Stmt(is.Else, true)[0]
+	curBlock := t.eval.CurBlock()
+	// After going through the if and else blocks, we must set to unknown
+	// all the vars that branched in any of those two paths.
+	for _, v := range curBlock.branchVars {
+		v.Set(v.AsUnknown())
+	}
+	curBlock.branchVars = nil
+	return []Stmt{&IfStmt{
+		Cond: is.Cond,
+		Body: bodyBlockStmt,
+		Else: elseStmt,
+	}}
+}
+
 func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 	switch s := s.(type) {
 	case *LoopStmt:
@@ -315,33 +384,18 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 			if l.Name == "" {
 				panic("TODO")
 			}
-			v := t.eval.SetVar(l.Name, values[i])
-			if v.Known() {
-				ss.Push(&MetaStmt{
-					&Comment{Value: fmt.Sprintf("%v = %v",
-						l.Name, v)},
-				})
-			}
+			t.eval.SetVar(l.Name, values[i])
+			// if values[i].Known() {
+			ss.Push(&MetaStmt{
+				&Comment{Value: fmt.Sprintf("%v = %v",
+					l.Name, values[i])},
+			})
+			// }
 		}
 		ss.Push(s)
 		return ss
 	case *IfStmt:
-		cond := t.eval.Eval(s.Cond)[0].(*PrimValue)
-		// If we can evaluate the if condition, we remove the if already
-		if cond.Known() {
-			if cond.V() == 1 {
-				return []Stmt{t.BlockStmt(s.Body, branch)}
-			} else if s.Else != nil {
-				return t.Stmt(s.Else, branch)
-			} else {
-				return []Stmt{}
-			}
-		}
-		return []Stmt{&IfStmt{
-			Cond: s.Cond,
-			Body: t.BlockStmt(s.Body, true),
-			Else: t.Stmt(s.Else, true)[0],
-		}}
+		return t.IfStmt(s, branch)
 	case *EndBlock:
 		return []Stmt{&EndBlock{
 			Id: t.blockIdMap[s.Id],
@@ -364,8 +418,6 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 			if !branchBreak {
 				t.breakLoop = true
 			}
-			// TODO: If this happens in a non-branch block we
-			// propagate up to the for block
 			return []Stmt{&EndBlock{
 				Id: t.loopBlockId,
 			}}
@@ -406,13 +458,11 @@ func (t *TransformUnroll) Transform(pkg *Package) Package {
 	return Package{
 		Structs: pkg.Structs,
 		Funcs:   funcs,
-		// BlockCnt: t.blockCnt,
 	}
 }
 
 func unroll(pkg *Package) Package {
 	t := NewTransformUnroll()
-	// t.blockCnt = pkg.BlockCnt
 	return t.Transform(pkg)
 }
 

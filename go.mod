@@ -1,4 +1,4 @@
-module frontend
+module gocircuit
 
 go 1.22.5
 
