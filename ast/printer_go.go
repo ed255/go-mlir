@@ -82,6 +82,9 @@ func printGoExpr(o io.Writer, e Expr, parens bool) {
 		fmt.Fprintf(o, "(")
 	}
 	switch e := e.(type) {
+	case *UnaryExpr:
+		fmt.Fprintf(o, "%v", ops[e.Op])
+		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 	case *BinaryExpr:
 		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, " %v ", ops[e.Op])
@@ -114,13 +117,13 @@ func printGoExpr(o io.Writer, e Expr, parens bool) {
 		}
 		fmt.Fprintf(o, ")")
 	case *StructLit:
-		fmt.Fprintf(o, "%v{", e.Name)
-		for i, kv := range e.KeyValues {
+		fmt.Fprintf(o, "%v{", e.Type.Name)
+		for i, f := range e.Type.Fields {
 			if i != 0 {
 				fmt.Fprintf(o, ", ")
 			}
-			fmt.Fprintf(o, "%v: ", kv.Key)
-			printGoExpr(o, kv.Value, false)
+			fmt.Fprintf(o, "%v: ", f.Name)
+			printGoExpr(o, e.Values[i], false)
 		}
 		fmt.Fprintf(o, "}")
 	case *SelectorExpr:

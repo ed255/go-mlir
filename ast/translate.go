@@ -113,7 +113,7 @@ func (t *Translator) Type(typ types.Type) Type {
 		}
 	case *types.Array:
 		return &ArrayType{
-			Len:  typ.Len(),
+			Len:  int(typ.Len()),
 			Type: t.Type(typ.Elem()),
 		}
 	default:
@@ -178,15 +178,11 @@ func (t *Translator) CompositeLit(compLit *ast.CompositeLit) Expr {
 		}
 		structName := compLit.Type.(*ast.Ident).Name
 		st := t.structs[structName]
-		sl := StructLit{Name: structName}
+		sl := StructLit{Type: st}
 		for _, field := range st.Fields {
-			var kvExpr KeyValueExpr
 			e, ok := kvs[field.Name]
 			if ok {
-				kvExpr = KeyValueExpr{
-					Key:   field.Name,
-					Value: e,
-				}
+				sl.Values = append(sl.Values, e)
 			} else {
 				panic("WIP")
 				// vr := t.newAnonConst(types.Typ[types.Bool], 0)
@@ -195,7 +191,6 @@ func (t *Translator) CompositeLit(compLit *ast.CompositeLit) Expr {
 				// vr.size = field.size
 				// vars = append(vars)
 			}
-			sl.KeyValues = append(sl.KeyValues, kvExpr)
 		}
 		return &sl
 	default:
@@ -263,13 +258,15 @@ func (t *Translator) Expr(expr ast.Expr) Expr {
 		e = t.CompositeLit(expr)
 	case *ast.SelectorExpr:
 		e = &SelectorExpr{
-			X:   t.Expr(expr.X),
-			Sel: expr.Sel.Name,
+			X:    t.Expr(expr.X),
+			Sel:  expr.Sel.Name,
+			Type: t.TypeFromExpr(expr.X).(*StructDecl),
 		}
 	case *ast.IndexExpr:
 		e = &IndexExpr{
 			X:     t.Expr(expr.X),
 			Index: t.Expr(expr.Index),
+			Type:  t.TypeFromExpr(expr.X),
 		}
 	default:
 		panic(fmt.Errorf("unsupported Expr: %+T", expr))
@@ -280,28 +277,22 @@ func (t *Translator) Expr(expr ast.Expr) Expr {
 func (t *Translator) VarRef(name string) VarRef {
 	return VarRef{
 		Name: name,
+		// Type: ..., // TODO
 	}
 }
 
 func (t *Translator) VarRefFromExpr(expr ast.Expr) VarRef {
 	switch expr := expr.(type) {
 	case *ast.Ident:
-		return t.VarRef(expr.Name)
+		return VarRef{Name: expr.Name, Type: t.TypeFromExpr(expr)}
 	case *ast.SelectorExpr:
 		parent := t.VarRefFromExpr(expr.X)
-		return VarRef{Parent: &parent, Name: expr.Sel.Name}
+		return VarRef{Parent: &parent, Name: expr.Sel.Name, Type: t.TypeFromExpr(expr.X)}
 	case *ast.IndexExpr:
 		parent := t.VarRefFromExpr(expr.X)
-		return VarRef{Parent: &parent, Index: t.Expr(expr.Index)}
+		return VarRef{Parent: &parent, Index: t.Expr(expr.Index), Type: t.TypeFromExpr(expr.X)}
 	default:
 		panic(fmt.Errorf("unsupported Expr for VarRef: %+T", expr))
-	}
-}
-
-func (t *Translator) GenVarDecl(name string, typ Type) *VarDecl {
-	return &VarDecl{
-		Name: name,
-		Type: typ,
 	}
 }
 
@@ -328,6 +319,7 @@ func (t *Translator) ExprTypes(e ast.Expr) []Type {
 }
 
 func (t *Translator) BranchStmt(branchStmt *ast.BranchStmt) Stmt {
+	assert(branchStmt.Label == nil, "unsupported")
 	var tok BranchToken
 	switch branchStmt.Tok {
 	case token.BREAK:
@@ -378,10 +370,10 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 			for j := 0; j < t.ExprLen(rhs); j++ {
 				lhs := assignStmt.Lhs[i].(*ast.Ident)
 				ss.Push(&DeclStmt{
-					Decl: t.GenVarDecl(
-						lhs.Name,
-						t.TypeFromExpr(assignStmt.Lhs[i]),
-					),
+					Decl: &VarDecl{
+						Name: lhs.Name,
+						Type: t.TypeFromExpr(assignStmt.Lhs[i]),
+					},
 				})
 				lhss = append(lhss, t.VarRef(lhs.Name))
 				i += 1
@@ -444,17 +436,39 @@ func (t *Translator) ReturnStmt(returnStmt *ast.ReturnStmt) []Stmt {
 	return ss
 }
 
+func (t *Translator) Default(typ Type) Expr {
+	switch typ := typ.(type) {
+	case *PrimType:
+		return &BasicLit{Type: *typ, Value: 0}
+	case *StructDecl:
+		var values []Expr
+		for _, f := range typ.Fields {
+			values = append(values, t.Default(f.Type))
+		}
+		return &StructLit{Type: typ, Values: values}
+	case *ArrayType:
+		panic("TODO")
+	default:
+		panic("unreachable")
+	}
+}
+
 func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
 	var ss Stmts
 	if valueSpec.Values == nil {
 		for _, name := range valueSpec.Names {
+			typ := t.TypeFromExpr(valueSpec.Type)
 			declStmt := DeclStmt{
-				Decl: t.GenVarDecl(
-					name.Name,
-					t.TypeFromExpr(valueSpec.Type),
-				),
+				Decl: &VarDecl{
+					Name: name.Name,
+					Type: typ,
+				},
 			}
-			ss.Push(&declStmt)
+			assignStmt := AssignStmt{
+				Lhs: []VarRef{{Name: name.Name}},
+				Rhs: t.Default(typ),
+			}
+			ss.Push(&declStmt, &assignStmt)
 		}
 	} else {
 		i := 0
@@ -463,10 +477,10 @@ func (t *Translator) ValueSpec(valueSpec *ast.ValueSpec) []Stmt {
 			var lhss []VarRef
 			for _, typ := range t.ExprTypes(value) {
 				declStmt := DeclStmt{
-					Decl: t.GenVarDecl(
-						valueSpec.Names[i].Name,
-						typ,
-					),
+					Decl: &VarDecl{
+						Name: valueSpec.Names[i].Name,
+						Type: typ,
+					},
 				}
 				ss.Push(&declStmt)
 				lhss = append(lhss, t.VarRef(valueSpec.Names[i].Name))

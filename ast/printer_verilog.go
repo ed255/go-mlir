@@ -12,6 +12,7 @@ type PrinterVerilog struct {
 	// dirtyLine is true when we have printed something in the current line and we haven't addad a new line yet
 	dirtyLine    bool
 	usedBlockIds map[int]bool
+	wireCnt      int
 }
 
 func NewPrinterVerilog(out io.Writer) PrinterVerilog {
@@ -20,6 +21,12 @@ func NewPrinterVerilog(out io.Writer) PrinterVerilog {
 		out:          out,
 		usedBlockIds: make(map[int]bool),
 	}
+}
+
+func (p *PrinterVerilog) NextWire() int {
+	w := p.wireCnt
+	p.wireCnt += 1
+	return w
 }
 
 func (p *PrinterVerilog) errcheck(err error) {
@@ -44,7 +51,7 @@ func (p *PrinterVerilog) Printfln(format string, a ...any) {
 }
 
 func (p *PrinterVerilog) VarDecl(vd *VarDecl) {
-	p.Printfln("%v %v,", p.Type(vd.Type), vd.Name)
+	p.Printfln("%v %v;", p.Type(vd.Type), vd.Name)
 }
 
 func (p *PrinterVerilog) DeclStmt(ds *DeclStmt) {
@@ -56,46 +63,101 @@ func (p *PrinterVerilog) DeclStmt(ds *DeclStmt) {
 	}
 }
 
-func printVerilogExpr(o io.Writer, e Expr, parens bool) {
+func (p *PrinterVerilog) FprintBasicLit(o io.Writer, bl *BasicLit) {
+	v := bl.Value
+	if bl.Type.signed {
+		fmt.Fprintf(o, "(-")
+		v = -v
+	}
+	fmt.Fprintf(o, "%v'h%x", bl.Type.size, v)
+	if bl.Type.signed {
+		fmt.Fprintf(o, ")")
+	}
+}
+
+// Create a wire and assign it the Expr
+func (p *PrinterVerilog) wireExpr(e Expr, t Type) int {
+	w := p.NextWire()
+	p.Printfln("%v _%v_", p.Type(t), w)
+	p.Printfln("assign _%v_ = %v;", w, p.SprintExpr(e))
+	return w
+}
+
+func (p *PrinterVerilog) structFieldOffsetSize(t *StructDecl, field string) (int, int) {
+	offset := 0
+	size := -1
+	for _, f := range t.Fields {
+		// TODO: cache offsets and sizes
+		if f.Name == field {
+			size = f.Type.BitSize()
+			break
+		}
+		offset += f.Type.BitSize()
+	}
+	assert(size != -1)
+	return offset, size
+}
+
+func (p *PrinterVerilog) FprintSelectorExpr(o io.Writer, se *SelectorExpr) {
+	w := p.wireExpr(se.X, se.Type)
+	offset, size := p.structFieldOffsetSize(se.Type, se.Sel)
+	fmt.Fprintf(o, "_%v_[%v:%v]", w, offset+size-1, offset)
+}
+
+func (p *PrinterVerilog) FprintStructLit(o io.Writer, sl *StructLit) {
+	var wires []int
+	for i, f := range sl.Type.Fields {
+		w := p.wireExpr(sl.Values[i], f.Type)
+		wires = append(wires, w)
+	}
+	fmt.Fprintf(o, "{")
+	for i := range wires {
+		if i != 0 {
+			fmt.Fprintf(o, ", ")
+		}
+		// Reverse the wires because Verilog concatenates in big endian
+		w := wires[len(wires)-1-i]
+		fmt.Fprintf(o, "_%v_", w)
+	}
+	fmt.Fprintf(o, "}")
+}
+
+func (p *PrinterVerilog) FprintExpr(o io.Writer, e Expr, parens bool) {
 	if parens {
 		fmt.Fprintf(o, "(")
 	}
 	switch e := e.(type) {
 	case *BinaryExpr:
-		printVerilogExpr(o, e.X, printExprNeedsParens(e.X))
+		p.FprintExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, " %v ", ops[e.Op])
-		printVerilogExpr(o, e.Y, printExprNeedsParens(e.Y))
+		p.FprintExpr(o, e.Y, printExprNeedsParens(e.Y))
 	case *Ident:
 		fmt.Fprintf(o, "%v", e.Name)
 	case *BasicLit:
-		if e.Type.signed {
-			fmt.Fprintf(o, "%v", e.Value)
-		} else {
-			fmt.Fprintf(o, "%v", uint64(e.Value))
-		}
+		p.FprintBasicLit(o, e)
 	case *CondExpr:
-		printVerilogExpr(o, e.Cond, printExprNeedsParens(e.Cond))
+		p.FprintExpr(o, e.Cond, printExprNeedsParens(e.Cond))
 		fmt.Fprintf(o, " ? ")
-		printVerilogExpr(o, e.CaseTrue, printExprNeedsParens(e.CaseTrue))
+		p.FprintExpr(o, e.CaseTrue, printExprNeedsParens(e.CaseTrue))
 		fmt.Fprintf(o, " : ")
-		printVerilogExpr(o, e.CaseFalse, printExprNeedsParens(e.CaseFalse))
+		p.FprintExpr(o, e.CaseFalse, printExprNeedsParens(e.CaseFalse))
 	case *CallExpr:
 		fmt.Fprintf(o, "%v(", e.Fun)
 		for i, arg := range e.Args {
 			if i != 0 {
 				fmt.Fprintf(o, ", ")
 			}
-			printVerilogExpr(o, arg, false)
+			p.FprintExpr(o, arg, false)
 		}
 		fmt.Fprintf(o, ")")
 	case *StructLit:
-		panic("unsupported by verilog")
+		p.FprintStructLit(o, e)
 	case *SelectorExpr:
-		panic("unsupported by verilog")
+		p.FprintSelectorExpr(o, e)
 	case *IndexExpr:
-		printVerilogExpr(o, e.X, printExprNeedsParens(e.X))
+		p.FprintExpr(o, e.X, printExprNeedsParens(e.X))
 		fmt.Fprintf(o, "[")
-		printVerilogExpr(o, e.Index, false)
+		p.FprintExpr(o, e.Index, false)
 		fmt.Fprintf(o, "]")
 	default:
 		panic("TODO")
@@ -105,9 +167,9 @@ func printVerilogExpr(o io.Writer, e Expr, parens bool) {
 	}
 }
 
-func SprintVerilogExpr(e Expr) string {
+func (p *PrinterVerilog) SprintExpr(e Expr) string {
 	var exprStr strings.Builder
-	printVerilogExpr(&exprStr, e, false)
+	p.FprintExpr(&exprStr, e, false)
 	return exprStr.String()
 }
 
@@ -122,38 +184,6 @@ func (p *PrinterVerilog) MetaStmt(m *MetaStmt) {
 	}
 }
 
-func (p *PrinterVerilog) IfStmt(is *IfStmt) {
-	p.Printf("if %v ", SprintVerilogExpr(is.Cond))
-	newline := false
-	if is.Else == nil {
-		newline = true
-	}
-	p.BlockStmt(is.Body, newline)
-	switch es := is.Else.(type) {
-	case *BlockStmt:
-		p.Printf("else ")
-		p.BlockStmt(es, true)
-	case *IfStmt:
-		p.Printf("else ")
-		p.IfStmt(es)
-	case nil:
-	default:
-		panic("unreachable")
-	}
-}
-
-func (p *PrinterVerilog) LoopStmt(ls *LoopStmt) {
-	p.Printfln("{")
-	p.lvl += 1
-	for _, s := range ls.Init {
-		p.Stmt(s)
-	}
-	p.Printf("for %v ", SprintVerilogExpr(ls.Cond))
-	p.BlockStmt(ls.Body, true)
-	p.lvl -= 1
-	p.Printfln("}")
-}
-
 func (p *PrinterVerilog) BranchStmt(bs *BranchStmt) {
 	switch bs.Tok {
 	case BREAK:
@@ -165,36 +195,50 @@ func (p *PrinterVerilog) BranchStmt(bs *BranchStmt) {
 	}
 }
 
-func sprintVerilogVarRefChild(vr *VarRef) string {
-	str := ""
-	if vr.Name != "" {
-		if vr.Parent != nil {
-			str += "."
-		}
-		str += vr.Name
-	} else {
-		str += fmt.Sprintf("[%v]", SprintVerilogExpr(vr.Index))
+func (p *PrinterVerilog) varRefAssignAux(vr *VarRef, e Expr) (string, string) {
+	dst := vr.Name
+	child := vr
+	parent := child.Parent
+	if vr.Parent == nil {
+		return dst, p.SprintExpr(e)
 	}
-	return str
-}
-
-func SprintVerilogVarRef(vr *VarRef) string {
-	str := sprintVerilogVarRefChild(vr)
-	parent := vr.Parent
+	begin, end := 0, 0
+	prevSize := vr.Type.BitSize()
 	for parent != nil {
-		str = sprintVerilogVarRefChild(parent) + str
+		dst = parent.Name
+		if parent.Name != "" {
+			// Struct field selector
+			offset, size := p.structFieldOffsetSize(
+				parent.Type.(*StructDecl), child.Name)
+			begin = begin*prevSize + offset
+			end = end*prevSize + offset + size
+			prevSize = parent.Type.BitSize()
+		} else {
+			// Array index
+			panic("TODO")
+		}
+		child = parent
 		parent = parent.Parent
 	}
-	return str
+	assert(dst != "")
+
+	var rhs strings.Builder
+	fmt.Fprintf(&rhs, "{")
+	if end != prevSize-1 {
+		fmt.Fprintf(&rhs, "%v[%v:%v], ", dst, prevSize-1, end)
+	}
+	fmt.Fprintf(&rhs, p.SprintExpr(e))
+	if begin != 0 {
+		fmt.Fprintf(&rhs, ", %v[%v:0], ", dst, begin-1)
+	}
+	fmt.Fprintf(&rhs, "}")
+	return dst, rhs.String()
 }
 
 func (p *PrinterVerilog) AssignStmt(as *AssignStmt) {
-	var exprStr strings.Builder
-	printVerilogExpr(&exprStr, as.Rhs, false)
-	if len(as.Lhs) != 1 {
-		panic("unsupported by verilog")
-	}
-	p.Printfln("assign %v = %v;", SprintVerilogVarRef(&as.Lhs[0]), exprStr.String())
+	assert(len(as.Lhs) == 1, "unsupported by verilog")
+	dst, rhs := p.varRefAssignAux(&as.Lhs[0], as.Rhs)
+	p.Printfln("assign %v = %v;", dst, rhs)
 }
 
 func (p *PrinterVerilog) Stmt(s Stmt) {
@@ -204,7 +248,7 @@ func (p *PrinterVerilog) Stmt(s Stmt) {
 	case *AssignStmt:
 		p.AssignStmt(s)
 	case *IfStmt:
-		p.IfStmt(s)
+		panic("unsupported by verilog")
 	case *BlockStmt:
 		p.BlockStmt(s, true)
 	case *MetaStmt:
@@ -268,9 +312,9 @@ func (p *PrinterVerilog) Type(t Type) string {
 			return s
 		}
 	case *StructDecl:
-		panic("TODO")
+		return fmt.Sprintf("wire [%v:0]", t.BitSize()-1)
 	case *ArrayType:
-		panic("TODO")
+		return fmt.Sprintf("wire [%v:0]", t.BitSize()-1)
 	default:
 		panic("TODO")
 	}

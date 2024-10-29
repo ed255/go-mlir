@@ -1,5 +1,11 @@
 package ast
 
+import (
+	"bytes"
+	"fmt"
+	"runtime/debug"
+)
+
 // import (
 // 	"bytes"
 // 	"fmt"
@@ -681,3 +687,67 @@ package ast
 //
 // 	return Translate(node, typeInfo)
 // }
+
+type TransformRmBranches struct {
+}
+
+func NewTransformRmBranches() TransformRmBranches {
+	return TransformRmBranches{}
+}
+
+func (t *TransformRmBranches) BlockStmt(bs *BlockStmt) *BlockStmt {
+	panic("TODO")
+	// bs1 := t.NewBlockStmt()
+	// t.blockIdMap[bs.Id] = bs1.Id
+	// t.eval.PushBlock(bs1.Id)
+	// t.eval.CurBlock().branch = branch
+	// defer t.eval.PopBlock()
+	// for _, stmt := range bs.List {
+	// 	bs1.List.Push(t.Stmt(stmt, false)...)
+	// }
+	// return bs1
+}
+
+func (t *TransformRmBranches) FuncDecl(fd *FuncDecl) *FuncDecl {
+	return &FuncDecl{
+		Name: fd.Name,
+		Type: fd.Type,
+		Body: t.BlockStmt(fd.Body),
+	}
+}
+
+func (t *TransformRmBranches) Transform(pkg *Package) Package {
+	var funcs []*FuncDecl
+	for _, f := range pkg.Funcs {
+		funcs = append(funcs, t.FuncDecl(f))
+	}
+	return Package{
+		Structs: pkg.Structs,
+		Funcs:   funcs,
+	}
+}
+
+func rmBranches(pkg *Package) Package {
+	t := NewTransformRmBranches()
+	return t.Transform(pkg)
+}
+
+func RmBranches(pkg *Package) (p Package, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var ok bool
+			err, ok = r.(error)
+			if !ok {
+				panic(r)
+			}
+
+			fmt.Println("DEBUG: Error backtrace:")
+			trace := debug.Stack()
+			traceLines := bytes.Split(trace, []byte("\n"))
+			trace = bytes.Join(traceLines[7:], []byte("\n"))
+			fmt.Println(string(trace))
+		}
+	}()
+	p = rmBranches(pkg)
+	return p, nil
+}

@@ -26,7 +26,7 @@ func TestVerilogTranslate(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	pkg, err := TranslateFile("../samples/add.go", nil)
+	pkg, err := TranslateFile("../samples/struct.go", nil)
 	test_assert.Nil(t, err)
 	// spew.Dump(f)
 	p := NewPrinterVerilog(os.Stdout)
@@ -38,7 +38,7 @@ func TestUnroll(t *testing.T) {
 	spew.Config.SortKeys = true
 	spew.Config.DisableCapacities = true
 
-	pkg, err := TranslateFile("../samples/for4.go", nil)
+	pkg, err := TranslateFile("../samples/for5.go", nil)
 	test_assert.Nil(t, err)
 	p := NewPrinterGo(os.Stdout)
 	fmt.Printf("// Translate\n\n")

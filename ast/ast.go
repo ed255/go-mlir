@@ -25,6 +25,7 @@ func (*VarDecl) declNode() {}
 
 type Type interface {
 	typeNode()
+	BitSize() int
 }
 
 type PrimType struct {
@@ -32,9 +33,17 @@ type PrimType struct {
 	size   int
 }
 
+func (t *PrimType) BitSize() int {
+	return t.size
+}
+
 type ArrayType struct {
-	Len  int64
+	Len  int
 	Type Type
+}
+
+func (t *ArrayType) BitSize() int {
+	return t.Len * t.Type.BitSize()
 }
 
 func (*PrimType) typeNode()   {}
@@ -64,6 +73,14 @@ type Field struct {
 type StructDecl struct {
 	Name   string
 	Fields []Field
+}
+
+func (t *StructDecl) BitSize() int {
+	var size int
+	for _, f := range t.Fields {
+		size += f.Type.BitSize()
+	}
+	return size
 }
 
 // TODO
@@ -135,6 +152,7 @@ type VarRef struct {
 	// If Parent != nil then it contains the reference Struct/Array and
 	// Name/Index is the field
 	Parent *VarRef
+	Type   Type
 	// If Name == "", then Index is an Array index
 	Name  string
 	Index Expr
@@ -149,6 +167,7 @@ type Expr interface {
 	exprNode()
 }
 
+func (*UnaryExpr) exprNode()    {}
 func (*BinaryExpr) exprNode()   {}
 func (*CondExpr) exprNode()     {}
 func (*Ident) exprNode()        {}
@@ -166,6 +185,11 @@ type CondExpr struct {
 	CaseFalse Expr
 }
 
+type UnaryExpr struct {
+	Op Op
+	X  Expr
+}
+
 type BinaryExpr struct {
 	X  Expr
 	Op Op
@@ -181,24 +205,29 @@ type BasicLit struct {
 	Value int64
 }
 
-type KeyValueExpr struct {
-	Key   string
-	Value Expr
-}
+// type KeyValueExpr struct {
+// 	Key   string
+// 	Value Expr
+// }
 
 type StructLit struct {
-	Name      string
-	KeyValues []KeyValueExpr
+	// Name      string
+	Type *StructDecl
+	// The values follow the same order as in StructDecl.  A StructLit
+	// includes a value for each field
+	Values []Expr
 }
 
 type SelectorExpr struct {
-	X   Expr
-	Sel string
+	X    Expr
+	Sel  string
+	Type *StructDecl
 }
 
 type IndexExpr struct {
 	X     Expr
 	Index Expr
+	Type  Type
 }
 
 type Meta interface {
@@ -251,6 +280,7 @@ const (
 	EQL // ==
 	LSS // <
 	GTR // >
+	NOT // !
 	NEQ // !=
 	LEQ // <=
 	GEQ // >=
@@ -274,6 +304,7 @@ var ops = [...]string{
 	EQL: "==",
 	LSS: "<",
 	GTR: ">",
+	NOT: "!",
 	NEQ: "!=",
 	LEQ: "<=",
 	GEQ: ">=",

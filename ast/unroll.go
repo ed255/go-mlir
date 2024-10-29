@@ -179,6 +179,7 @@ type Value interface {
 	AsUnknown() Value
 	Set(Value)
 	Known() bool
+	Lit() Expr
 }
 
 // If known is true the value will be set to 0 (default go value)
@@ -236,6 +237,13 @@ func (v *PrimValue) String() string {
 	}
 }
 
+func (v *PrimValue) Lit() Expr {
+	return &BasicLit{
+		Type:  v.Type,
+		Value: v.V(),
+	}
+}
+
 type StructValue struct {
 	V    map[string]Value
 	Type *StructDecl
@@ -264,7 +272,20 @@ func (v *StructValue) Known() bool {
 	return known
 }
 
+func (v *StructValue) Lit() Expr {
+	var values []Expr
+	for _, f := range v.Type.Fields {
+		value := v.V[f.Name].Lit()
+		values = append(values, value)
+	}
+	return &StructLit{
+		Type:   v.Type,
+		Values: values,
+	}
+}
+
 type TransformUnroll struct {
+	pkg         *Package
 	eval        Evaluator
 	cfg         UnrollConfig
 	blockCnt    int
@@ -280,8 +301,9 @@ type UnrollConfig struct {
 	MaxIter int
 }
 
-func NewTransformUnroll() TransformUnroll {
+func NewTransformUnroll(pkg *Package) TransformUnroll {
 	return TransformUnroll{
+		pkg: pkg,
 		cfg: UnrollConfig{
 			MaxIter: 16,
 		},
@@ -317,13 +339,35 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	}
 	i := 0
 	for ; i < t.cfg.MaxIter; i++ {
+		var condExprUnknown Expr
 		if ls.Cond != nil {
-			cond := t.eval.Eval(ls.Cond)[0].(*PrimValue)
-			if cond.Known() && cond.V() == 0 {
+			condExpr, condValue := t.ExprOne(ls.Cond)
+			cond := condValue.(*PrimValue)
+			if !cond.Known() {
+				condExprUnknown = condExpr
+			} else if cond.Known() && cond.V() == 0 {
 				break
 			}
 		}
 		t.iterBlockId = t.blockCnt
+		// If the condition expression is not nit and unknown, we
+		// insert a condition to end the loop block when the condition
+		// is false.
+		if condExprUnknown != nil {
+			body := t.NewBlockStmt()
+			body.List.Push(&EndBlock{
+				Id: t.loopBlockId,
+			})
+			cond := &UnaryExpr{
+				Op: NOT,
+				X:  condExprUnknown,
+			}
+			bs.List.Push(&IfStmt{
+				Cond: cond,
+				Body: body,
+				Else: nil,
+			})
+		}
 		bs.List.Push(t.BlockStmt(ls.Body, false))
 		if t.breakLoop {
 			t.breakLoop = false // reset
@@ -337,7 +381,8 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 }
 
 func (t *TransformUnroll) IfStmt(is *IfStmt, branch bool) []Stmt {
-	cond := t.eval.Eval(is.Cond)[0].(*PrimValue)
+	condExpr, condValue := t.ExprOne(is.Cond)
+	cond := condValue.(*PrimValue)
 	// If we can evaluate the if condition, we remove the if already
 	if cond.Known() {
 		if cond.V() == 1 {
@@ -358,10 +403,59 @@ func (t *TransformUnroll) IfStmt(is *IfStmt, branch bool) []Stmt {
 	}
 	curBlock.branchVars = nil
 	return []Stmt{&IfStmt{
-		Cond: is.Cond,
+		Cond: condExpr,
 		Body: bodyBlockStmt,
 		Else: elseStmt,
 	}}
+}
+
+func (t *TransformUnroll) ExprOne(e Expr) (Expr, Value) {
+	expr, value := t.Expr(e)
+	assert(len(expr) == 1)
+	assert(len(value) == 1)
+	return expr[0], value[0]
+}
+
+func (t *TransformUnroll) Expr(e Expr) ([]Expr, []Value) {
+	if e, ok := e.(*CallExpr); ok {
+		var ft FuncType
+		for _, f := range t.pkg.Funcs {
+			if f.Name == e.Fun {
+				ft = f.Type
+			}
+		}
+		var vs []Value
+		for _, f := range ft.Results {
+			vs = append(vs, NewValue(f.Type, false))
+		}
+		return []Expr{e}, vs
+	}
+
+	values := t.eval.Eval(e)
+	assert(len(values) == 1)
+	vs := []Value{values[0]}
+	if values[0].Known() {
+		return []Expr{values[0].Lit()}, vs
+	}
+
+	switch e := e.(type) {
+	case *BinaryExpr:
+		x, _ := t.Expr(e.X)
+		y, _ := t.Expr(e.Y)
+		assert(len(x) == 1 && len(y) == 1)
+		return []Expr{&BinaryExpr{X: x[0], Op: e.Op, Y: y[0]}}, vs
+	case *Ident:
+		return []Expr{e}, vs
+	case *StructLit:
+		panic("TODO")
+	case *SelectorExpr:
+		panic("TODO")
+	case *IndexExpr:
+		panic("TODO")
+	default:
+		panic("unreachable")
+	}
+
 }
 
 func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
@@ -375,7 +469,7 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 		t.eval.AddVar(varDecl.Name, varDecl.Type, true)
 		return []Stmt{s}
 	case *AssignStmt:
-		values := t.eval.Eval(s.Rhs)
+		rhs, values := t.Expr(s.Rhs)
 		var ss Stmts
 		for i, l := range s.Lhs {
 			if l.Parent != nil {
@@ -385,14 +479,21 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 				panic("TODO")
 			}
 			t.eval.SetVar(l.Name, values[i])
-			// if values[i].Known() {
-			ss.Push(&MetaStmt{
-				&Comment{Value: fmt.Sprintf("%v = %v",
-					l.Name, values[i])},
-			})
-			// }
+			if values[i].Known() {
+				ss.Push(&MetaStmt{
+					&Comment{Value: fmt.Sprintf("%v = %v",
+						l.Name, SprintGoExpr(s.Rhs))},
+				})
+			}
 		}
-		ss.Push(s)
+		if len(rhs) == 1 {
+			ss.Push(&AssignStmt{Lhs: s.Lhs, Rhs: rhs[0]})
+		} else {
+			assert(len(rhs) == len(s.Lhs))
+			for i, lhs := range s.Lhs {
+				ss.Push(&AssignStmt{Lhs: []VarRef{lhs}, Rhs: rhs[i]})
+			}
+		}
 		return ss
 	case *IfStmt:
 		return t.IfStmt(s, branch)
@@ -407,9 +508,14 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 			for i := 0; i < len(t.eval.blocks); i++ {
 				depth := len(t.eval.blocks) - 1 - i
 				block := t.eval.blocks[depth]
+				// If we find the loop block without any branch
+				// block in between we can signal the loop to
+				// finish by setting the breakLoop flag.
 				if block.id == t.loopBlockId {
 					break
 				}
+				// If we find a branch block before the loop
+				// block then this break is conditional.
 				if block.branch {
 					branchBreak = true
 					break
@@ -450,20 +556,20 @@ func (t *TransformUnroll) FuncDecl(fd *FuncDecl) *FuncDecl {
 	}
 }
 
-func (t *TransformUnroll) Transform(pkg *Package) Package {
+func (t *TransformUnroll) Transform() Package {
 	var funcs []*FuncDecl
-	for _, f := range pkg.Funcs {
+	for _, f := range t.pkg.Funcs {
 		funcs = append(funcs, t.FuncDecl(f))
 	}
 	return Package{
-		Structs: pkg.Structs,
+		Structs: t.pkg.Structs,
 		Funcs:   funcs,
 	}
 }
 
 func unroll(pkg *Package) Package {
-	t := NewTransformUnroll()
-	return t.Transform(pkg)
+	t := NewTransformUnroll(pkg)
+	return t.Transform()
 }
 
 func Unroll(pkg *Package) (p Package, err error) {
