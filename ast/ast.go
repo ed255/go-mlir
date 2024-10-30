@@ -29,12 +29,12 @@ type Type interface {
 }
 
 type PrimType struct {
-	signed bool
-	size   int
+	Signed bool
+	Size   int
 }
 
 func (t *PrimType) BitSize() int {
-	return t.size
+	return t.Size
 }
 
 type ArrayType struct {
@@ -51,7 +51,7 @@ func (*StructDecl) typeNode() {}
 func (*ArrayType) typeNode()  {}
 
 func NewPrimType(signed bool, size int) PrimType {
-	return PrimType{signed: signed, size: size}
+	return PrimType{Signed: signed, Size: size}
 }
 
 type FuncDecl struct {
@@ -261,6 +261,10 @@ const (
 )
 
 type Op int
+
+func (op Op) String() string {
+	return ops[op]
+}
 
 const (
 	ILLEGAL Op = iota

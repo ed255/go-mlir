@@ -16,35 +16,13 @@ func entrypoint_assign(a uint8) uint8 {
 	return a
 }
 
-func entrypoint_assign2(a uint8, b uint8) uint8 {
-	a, b = b, a
-	return a*2 + b
-}
-
 func entrypoint_define(a uint8) uint8 {
 	b := a + 1
 	return b
 }
 
-func entrypoint_func(a, b uint8) uint8 {
-	return add_func(a, b)
-}
-
-func add_func(a, b uint8) uint8 {
-	return a + b
-}
-
-func entrypoint_func2(a, b uint8) uint8 {
-	var x, y = add_func2(a, b)
-	return x + y
-}
-
-func add_func2(a, b uint8) (uint8, uint8) {
-	return a, a + b
-}
-
 func entrypoint_if2(a, b uint8) uint8 {
-	var x uint8 = 0
+	var x uint8 = a
 	if a > 5 {
 		if a > 10 {
 			x = x + 2
@@ -56,7 +34,7 @@ func entrypoint_if2(a, b uint8) uint8 {
 func entrypoint_if3(
 	a uint8,
 ) uint8 {
-	var x uint8 = 0
+	var x uint8 = a
 	if a/2 == 0 {
 		// x = x + b
 		if a/3 == 0 {
@@ -64,6 +42,44 @@ func entrypoint_if3(
 		} else if x == 0 {
 			x = x + 3
 		}
+	}
+	return x
+}
+
+func entrypoint_if4(
+	a uint8,
+) uint8 {
+	var i uint8
+	i = 1
+	if a/2 == 0 {
+		var j uint8
+		if a/3 == 0 {
+			i = i + 2
+			j = i
+			if a/4 == 0 {
+				i = i + 4 + j
+			}
+		} else {
+			i = i + 3
+		}
+		i += 4
+	}
+	i += 5
+	return i
+}
+
+func entrypoint_if5(
+	a uint8,
+) uint8 {
+	var x uint8 = a
+	if a/2 == 0 {
+		x = x + 1
+	} else if a/3 == 0 {
+		x = x + 2
+	} else if a/5 == 0 {
+		x = x + 3
+	} else {
+		x = x + 4
 	}
 	return x
 }
@@ -102,28 +118,6 @@ func entrypoint_return(a uint8) uint8 {
 	return a
 }
 
-type Data_struct struct {
-	a uint8
-	b uint8
-}
-
-func entrypoint_struct(a, b uint8) uint8 {
-	d := Data_struct{a: a, b: b}
-	d.a = d.a + 1
-	r := add_struct(d)
-	return r
-}
-
-func add_struct(d Data_struct) uint8 {
-	return d.a + d.b
-}
-
-func entrypoint_var(a uint8) uint8 {
-	var b = uint8(0)
-	b = a + 1
-	return b
-}
-
 func entrypoint_for(a uint8) uint8 {
 	for i := 0; i < 10; i++ {
 		a = a + 1
@@ -132,11 +126,12 @@ func entrypoint_for(a uint8) uint8 {
 }
 
 func entrypoint_for2(a uint8) uint8 {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 4; i++ {
 		a = a + 1
 		if a > 19 {
 			break
 		}
+		a = a + 1
 	}
 	return a
 }

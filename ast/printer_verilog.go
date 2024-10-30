@@ -2,6 +2,7 @@ package ast
 
 import (
 	"fmt"
+	. "gocircuit/common"
 	"io"
 	"strings"
 )
@@ -65,12 +66,12 @@ func (p *PrinterVerilog) DeclStmt(ds *DeclStmt) {
 
 func (p *PrinterVerilog) FprintBasicLit(o io.Writer, bl *BasicLit) {
 	v := bl.Value
-	if bl.Type.signed {
+	if bl.Type.Signed {
 		fmt.Fprintf(o, "(-")
 		v = -v
 	}
-	fmt.Fprintf(o, "%v'h%x", bl.Type.size, v)
-	if bl.Type.signed {
+	fmt.Fprintf(o, "%v'h%x", bl.Type.Size, v)
+	if bl.Type.Signed {
 		fmt.Fprintf(o, ")")
 	}
 }
@@ -94,7 +95,7 @@ func (p *PrinterVerilog) structFieldOffsetSize(t *StructDecl, field string) (int
 		}
 		offset += f.Type.BitSize()
 	}
-	assert(size != -1)
+	Assert(size != -1)
 	return offset, size
 }
 
@@ -220,7 +221,7 @@ func (p *PrinterVerilog) varRefAssignAux(vr *VarRef, e Expr) (string, string) {
 		child = parent
 		parent = parent.Parent
 	}
-	assert(dst != "")
+	Assert(dst != "")
 
 	var rhs strings.Builder
 	fmt.Fprintf(&rhs, "{")
@@ -236,7 +237,7 @@ func (p *PrinterVerilog) varRefAssignAux(vr *VarRef, e Expr) (string, string) {
 }
 
 func (p *PrinterVerilog) AssignStmt(as *AssignStmt) {
-	assert(len(as.Lhs) == 1, "unsupported by verilog")
+	Assert(len(as.Lhs) == 1, "unsupported by verilog")
 	dst, rhs := p.varRefAssignAux(&as.Lhs[0], as.Rhs)
 	p.Printfln("assign %v = %v;", dst, rhs)
 }
@@ -301,14 +302,14 @@ func (p *PrinterVerilog) FuncDecl(fd *FuncDecl) {
 func (p *PrinterVerilog) Type(t Type) string {
 	switch t := t.(type) {
 	case *PrimType:
-		if t.size == 1 {
+		if t.Size == 1 {
 			return "wire"
 		} else {
 			var s string
-			if t.signed {
+			if t.Signed {
 				s = "signed "
 			}
-			s += fmt.Sprintf("wire [%v:0]", t.size-1)
+			s += fmt.Sprintf("wire [%v:0]", t.Size-1)
 			return s
 		}
 	case *StructDecl:

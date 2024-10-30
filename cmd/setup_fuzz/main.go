@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"gocircuit/transforms/rm_branches"
+	"gocircuit/transforms/unroll"
 	"log"
 	"os"
 	"path"
@@ -9,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"frontend/ast"
+	"gocircuit/ast"
 
 	"github.com/iancoleman/strcase"
 )
@@ -70,10 +72,18 @@ func main() {
 	fuzzTest := File{Path: "./fuzz/fuzz_test.go"}
 	fuzzSamples := File{Path: "./fuzz/samples.go"}
 	fuzzSamplesTranslate := File{Path: "./fuzz/samples_translate.go"}
+	fuzzSamplesUnroll := File{Path: "./fuzz/samples_unroll.go"}
+	fuzzSamplesRmBranches := File{Path: "./fuzz/samples_rm_branches.go"}
 	fuzzScript := File{Path: "./fuzz.sh"}
 
 	var err error
-	for _, file := range []*File{&fuzzTest, &fuzzSamples, &fuzzSamplesTranslate} {
+	for _, file := range []*File{
+		&fuzzTest,
+		&fuzzSamples,
+		&fuzzSamplesTranslate,
+		&fuzzSamplesUnroll,
+		&fuzzSamplesRmBranches,
+	} {
 		file.File, err = os.OpenFile(file.Path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		errcheck(err)
 		defer file.File.Close()
@@ -128,15 +138,17 @@ TIME=5s
 		"add.go",
 		"assign.go",
 		"define.go",
-		"func.go",
-		"func2.go",
+		// "func.go",
+		// "func2.go",
 		"if2.go",
 		"if3.go",
+		"if4.go",
+		"if5.go",
 		"if.go",
 		"nest.go",
 		"return.go",
-		"struct.go",
-		"var.go",
+		// "struct.go",
+		// "var.go",
 		"for.go",
 		"for2.go",
 	}
@@ -146,7 +158,7 @@ TIME=5s
 	inputMap := make(map[string]string)
 	outputLenMap := make(map[string]int)
 
-	for _, name := range []string{"assign", "if3", "return", "define", "var", "for", "for2"} {
+	for _, name := range []string{"assign", "if3", "if4", "if5", "return", "define", "var", "for", "for2"} {
 		inputSampleMap[name] = "uint8(128)"
 		inputSpecMap[name] = "a uint8"
 		inputMap[name] = "a"
@@ -166,7 +178,6 @@ TIME=5s
 	}
 
 	for _, s := range samples {
-		// sampleFileName := s.Name()
 		sampleFileName := s
 		fmt.Printf(">>> %v\n", sampleFileName)
 		samplePath := path.Join(pathSamples, sampleFileName)
@@ -176,37 +187,71 @@ TIME=5s
 		sampleContent := string(contentBytes)
 		sampleContent = suffixGlobals(sampleContent, sampleName)
 
+		// Translate
 		pkg, err := ast.TranslateFile(samplePath, sampleContent)
 		errcheck(err)
-
 		var translateStr strings.Builder
-		p := ast.NewPrinter(&translateStr, ast.PrinterOpts{GoCompat: true})
+		p := ast.NewPrinterGo(&translateStr)
+		p.Package(&pkg)
+
+		// Unroll
+		pkg, err = unroll.Unroll(&pkg)
+		errcheck(err)
+		var unrollStr strings.Builder
+		p = ast.NewPrinterGo(&unrollStr)
+		p.Package(&pkg)
+
+		// RmBranches
+		pkg, err = rm_branches.RmBranches(&pkg)
+		errcheck(err)
+		var rmBranches strings.Builder
+		p = ast.NewPrinterGo(&rmBranches)
 		p.Package(&pkg)
 
 		sampleContentTranslate := translateStr.String()
 		sampleContentTranslate = suffixGlobals(sampleContentTranslate, "translate")
+		sampleContentUnroll := unrollStr.String()
+		sampleContentUnroll = suffixGlobals(sampleContentUnroll, "unroll")
+		sampleContentRmBranches := rmBranches.String()
+		sampleContentRmBranches = suffixGlobals(sampleContentRmBranches, "rm_branches")
 
 		var fuzzTestStr strings.Builder
-		err = tmplFuzzTest.Execute(&fuzzTestStr, FuzzTestData{
-			NameCapital: strcase.ToCamel(sampleName),
-			Name:        sampleName,
-			PassCapital: "Translate",
-			Pass:        "translate",
-			InputSample: inputSampleMap[sampleName],
-			InputSpec:   inputSpecMap[sampleName],
-			Input:       inputMap[sampleName],
-			OutputLen:   outputLenMap[sampleName],
-		})
-		errcheck(err)
+		for _, pass := range []string{"translate", "unroll", "rm_branches"} {
+			err = tmplFuzzTest.Execute(&fuzzTestStr, FuzzTestData{
+				NameCapital: strcase.ToCamel(sampleName),
+				Name:        sampleName,
+				PassCapital: strcase.ToCamel(pass),
+				Pass:        pass,
+				InputSample: inputSampleMap[sampleName],
+				InputSpec:   inputSpecMap[sampleName],
+				Input:       inputMap[sampleName],
+				OutputLen:   outputLenMap[sampleName],
+			})
+			errcheck(err)
+		}
 
 		sampleContent = strings.ReplaceAll(sampleContent, "package main\n", "")
 		fuzzSamples.File.WriteString(sampleContent)
+
 		fuzzSamplesTranslate.WriteString(sampleContentTranslate)
 		fuzzSamplesTranslate.WriteString("\n")
+		fuzzSamplesUnroll.WriteString(sampleContentUnroll)
+		fuzzSamplesUnroll.WriteString("\n")
+		fuzzSamplesRmBranches.WriteString(sampleContentRmBranches)
+		fuzzSamplesRmBranches.WriteString("\n")
+
 		fuzzTest.WriteString(fuzzTestStr.String())
 		fuzzTest.WriteString("\n")
 		fuzzScript.WriteString(fmt.Sprintf(
 			"go test ./fuzz -fuzztime ${TIME} -fuzz=\"^FuzzTranslate%v$\"\n",
+			strcase.ToCamel(sampleName),
+		))
+		fuzzScript.WriteString(fmt.Sprintf(
+			"go test ./fuzz -fuzztime ${TIME} -fuzz=\"^FuzzUnroll%v$\"\n",
+			strcase.ToCamel(sampleName),
+		))
+		fuzzScript.WriteString(fmt.Sprintf(
+			"go test ./fuzz -fuzztime ${TIME} -fuzz=\"^FuzzRmBranches%v$\"\n",
 			strcase.ToCamel(sampleName),
 		))
 	}

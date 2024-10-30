@@ -2,6 +2,7 @@ package ast
 
 import (
 	"fmt"
+	. "gocircuit/common"
 	"io"
 	"strings"
 )
@@ -45,6 +46,8 @@ func (p *PrinterGo) Printfln(format string, a ...any) {
 
 func (p *PrinterGo) VarDecl(vd *VarDecl) {
 	p.Printfln("var %v %v", vd.Name, p.Type(vd.Type))
+	// HACK: Skip "declared and not used" errors
+	p.Printfln("_ = %v", vd.Name)
 }
 
 func (p *PrinterGo) DeclStmt(ds *DeclStmt) {
@@ -83,23 +86,23 @@ func printGoExpr(o io.Writer, e Expr, parens bool) {
 	}
 	switch e := e.(type) {
 	case *UnaryExpr:
-		fmt.Fprintf(o, "%v", ops[e.Op])
+		fmt.Fprintf(o, "%v", e.Op.String())
 		printGoExpr(o, e.X, printExprNeedsParens(e.X))
 	case *BinaryExpr:
 		printGoExpr(o, e.X, printExprNeedsParens(e.X))
-		fmt.Fprintf(o, " %v ", ops[e.Op])
+		fmt.Fprintf(o, " %v ", e.Op.String())
 		printGoExpr(o, e.Y, printExprNeedsParens(e.Y))
 	case *Ident:
 		fmt.Fprintf(o, "%v", e.Name)
 	case *BasicLit:
-		if e.Type.size == 1 {
+		if e.Type.Size == 1 {
 			if e.Value == 0 {
 				fmt.Fprintf(o, "false")
 			} else {
 				fmt.Fprintf(o, "true")
 			}
 		} else {
-			if e.Type.signed {
+			if e.Type.Signed {
 				fmt.Fprintf(o, "%v", e.Value)
 			} else {
 				fmt.Fprintf(o, "%v", uint64(e.Value))
@@ -232,7 +235,7 @@ func (p *PrinterGo) AssignStmt(as *AssignStmt) {
 	var exprStr strings.Builder
 	condExpr, ok := as.Rhs.(*CondExpr)
 	if ok {
-		assert(len(as.Lhs) != 1)
+		Assert(len(as.Lhs) == 1)
 		// go-friendly ternary operator
 		printCondExprGo(&exprStr, condExpr, SprintGoVarRef(&as.Lhs[0]))
 		p.Printfln("%v", exprStr.String())
@@ -311,16 +314,16 @@ func (p *PrinterGo) FuncDecl(fd *FuncDecl) {
 func (p *PrinterGo) Type(t Type) string {
 	switch t := t.(type) {
 	case *PrimType:
-		if t.size == 1 {
+		if t.Size == 1 {
 			return "bool"
 		} else {
 			s := ""
-			if t.signed {
+			if t.Signed {
 				s += "int"
 			} else {
 				s += "uint"
 			}
-			s += fmt.Sprintf("%v", t.size)
+			s += fmt.Sprintf("%v", t.Size)
 			return s
 		}
 	case *StructDecl:
@@ -328,7 +331,7 @@ func (p *PrinterGo) Type(t Type) string {
 	case *ArrayType:
 		return fmt.Sprintf("[%v]%v", t.Len, p.Type(t.Type))
 	default:
-		panic("TODO")
+		panic(fmt.Errorf("TODO %+T", t))
 	}
 }
 

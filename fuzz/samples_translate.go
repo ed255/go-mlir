@@ -6,8 +6,12 @@ func entrypoint_add2_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   _out0 = (a + b) + b
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -17,8 +21,12 @@ func entrypoint_add_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   _out0 = a + b
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -27,24 +35,15 @@ func entrypoint_assign_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   a = a + 1
   a = a + 2
   a = a + 3
   _out0 = a
-  return
+  goto _endblock0
 }
-
-
-func entrypoint_assign2_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-) {
-  a = b
-  b = a
-  _out0 = (a * 2) + b
-  return
+_endblock0:
+return
 }
 
 
@@ -53,57 +52,15 @@ func entrypoint_define_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   var b uint8
+  _ = b
   b = a + 1
   _out0 = b
-  return
+  goto _endblock0
 }
-
-
-func entrypoint_func_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-) {
-  _out0 = add_func_translate(a, b)
-  return
-}
-
-func add_func_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-) {
-  _out0 = a + b
-  return
-}
-
-
-func entrypoint_func2_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-) {
-  var x uint8
-  var y uint8
-  x, y = add_func2_translate(a, b)
-  _out0 = x + y
-  return
-}
-
-func add_func2_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-  _out1 uint8,
-) {
-  _out0 = a
-  _out1 = a + b
-  return
+_endblock0:
+return
 }
 
 
@@ -113,15 +70,20 @@ func entrypoint_if2_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   var x uint8
-  x = 0
-  if a > 5 {
-    if a > 10 {
+  _ = x
+  x = a
+  if a > 5 { // b1
+    if a > 10 { // b2
       x = x + 2
     }
   }
   _out0 = x
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -130,17 +92,82 @@ func entrypoint_if3_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   var x uint8
-  x = 0
-  if (a / 2) == 0 {
-    if (a / 3) == 0 {
+  _ = x
+  x = a
+  if (a / 2) == 0 { // b1
+    if (a / 3) == 0 { // b2
       x = x + 2
-    } else if x == 0 {
+    } else if x == 0 { // b3
       x = x + 3
     }
   }
   _out0 = x
-  return
+  goto _endblock0
+}
+_endblock0:
+return
+}
+
+
+func entrypoint_if4_translate (
+  a uint8,
+) (
+  _out0 uint8,
+) {
+{ // b0
+  var i uint8
+  _ = i
+  i = 0
+  i = 1
+  if (a / 2) == 0 { // b1
+    var j uint8
+    _ = j
+    j = 0
+    if (a / 3) == 0 { // b2
+      i = i + 2
+      j = i
+      if (a / 4) == 0 { // b3
+        i = (i + 4) + j
+      }
+    } else { // b4
+      i = i + 3
+    }
+    i = i + 4
+  }
+  i = i + 5
+  _out0 = i
+  goto _endblock0
+}
+_endblock0:
+return
+}
+
+
+func entrypoint_if5_translate (
+  a uint8,
+) (
+  _out0 uint8,
+) {
+{ // b0
+  var x uint8
+  _ = x
+  x = a
+  if (a / 2) == 0 { // b1
+    x = x + 1
+  } else if (a / 3) == 0 { // b2
+    x = x + 2
+  } else if (a / 5) == 0 { // b3
+    x = x + 3
+  } else { // b4
+    x = x + 4
+  }
+  _out0 = x
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -150,17 +177,24 @@ func entrypoint_if_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   var x uint8
+  _ = x
   x = 0
-  if a == 0 {
+  if a == 0 { // b1
     x = x + b
     x = x + 2
     var x uint8
+    _ = x
+    x = 0
     x = 7
     b = x
   }
   _out0 = x
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -171,17 +205,22 @@ func entrypoint_nest_translate (
   _out0 uint8,
   _out1 uint16,
 ) {
+{ // b0
   var x uint8
+  _ = x
   x = 0
   var y uint16
+  _ = y
   y = 0
-  {
+  { // b1
     b = 44
     var b uint8
+    _ = b
     b = 32
-    {
+    { // b2
       b = 88
       var b uint16
+      _ = b
       b = 33
       y = b + 2
     }
@@ -191,7 +230,10 @@ func entrypoint_nest_translate (
   b = b + 1
   _out0 = x
   _out1 = y
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -200,46 +242,12 @@ func entrypoint_return_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   _out0 = a
-  return
+  goto _endblock0
 }
-
-
-func entrypoint_struct_translate (
-  a uint8,
-  b uint8,
-) (
-  _out0 uint8,
-) {
-  var d Data_struct
-  d = Data_struct{a: a, b: b}
-  d.a = d.a + 1
-  var r uint8
-  r = add_struct_translate(d)
-  _out0 = r
-  return
-}
-
-func add_struct_translate (
-  d Data_struct,
-) (
-  _out0 uint8,
-) {
-  _out0 = d.a + d.b
-  return
-}
-
-
-func entrypoint_var_translate (
-  a uint8,
-) (
-  _out0 uint8,
-) {
-  var b uint8
-  b = uint8(0)
-  b = a + 1
-  _out0 = b
-  return
+_endblock0:
+return
 }
 
 
@@ -248,18 +256,23 @@ func entrypoint_for_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   {
     var i int32
+    _ = i
     i = 0
-    for i < 10 {
-      {
+    for i < 10 { // b1
+      { // b2
         a = a + 1
       }
       i = i + 1
     }
   }
   _out0 = a
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 
@@ -268,21 +281,27 @@ func entrypoint_for2_translate (
 ) (
   _out0 uint8,
 ) {
+{ // b0
   {
     var i int32
+    _ = i
     i = 0
-    for i < 10 {
-      {
+    for i < 4 { // b1
+      { // b2
         a = a + 1
-        if a > 19 {
+        if a > 19 { // b3
           break
         }
+        a = a + 1
       }
       i = i + 1
     }
   }
   _out0 = a
-  return
+  goto _endblock0
+}
+_endblock0:
+return
 }
 
 

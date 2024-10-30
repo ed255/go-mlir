@@ -1,8 +1,10 @@
-package ast
+package unroll
 
 import (
 	"bytes"
 	"fmt"
+	"gocircuit/ast"
+	. "gocircuit/common"
 	"runtime/debug"
 	"slices"
 )
@@ -29,7 +31,7 @@ func (e *Evaluator) PopBlock() *Block {
 	return block
 }
 
-func (e *Evaluator) AddVar(name string, typ Type, known bool) {
+func (e *Evaluator) AddVar(name string, typ ast.Type, known bool) {
 	e.CurBlock().vars[name] = NewValue(typ, known)
 }
 
@@ -88,7 +90,7 @@ func (e *Evaluator) SetVar(name string, v Value) {
 	}
 }
 
-func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
+func (e *Evaluator) EvalBinaryExpr(be *ast.BinaryExpr) Value {
 	xValue := e.Eval(be.X)[0].(*PrimValue)
 	yValue := e.Eval(be.Y)[0].(*PrimValue)
 	known := true
@@ -99,44 +101,44 @@ func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
 	var z int64
 	isBool := false
 	typ := xValue.Type
-	signed := typ.signed
+	signed := typ.Signed
 
 	switch be.Op {
-	case ADD:
+	case ast.ADD:
 		z = x + y
-	case SUB:
+	case ast.SUB:
 		z = x - y
-	case MUL:
+	case ast.MUL:
 		z = x * y
-	case QUO:
+	case ast.QUO:
 		z = x / y
-	case REM:
+	case ast.REM:
 		z = x % y
-	case EQL:
+	case ast.EQL:
 		if x == y {
 			z = 1
 		}
 		isBool = true
-	case LSS:
+	case ast.LSS:
 		if (signed && x < y) || (!signed && uint64(x) < uint64(y)) {
 			z = 1
 		}
 		isBool = true
-	case GTR:
+	case ast.GTR:
 		if (signed && x > y) || (!signed && uint64(x) > uint64(y)) {
 			z = 1
 		}
 		isBool = true
 	default:
-		panic(fmt.Errorf("TODO Op: %v", ops[be.Op]))
+		panic(fmt.Errorf("TODO Op: %v", be.Op.String()))
 	}
 	// Mask according to the bit size
-	if typ.size < 64 {
-		z = z & ((1 << typ.size) - 1)
+	if typ.Size < 64 {
+		z = z & ((1 << typ.Size) - 1)
 	}
 
 	if isBool {
-		typ = Bool
+		typ = ast.Bool
 	}
 	return &PrimValue{
 		known: known,
@@ -145,17 +147,17 @@ func (e *Evaluator) EvalBinaryExpr(be *BinaryExpr) Value {
 	}
 }
 
-func (e *Evaluator) Eval(ex Expr) []Value {
+func (e *Evaluator) Eval(ex ast.Expr) []Value {
 	switch ex := ex.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		return []Value{e.EvalBinaryExpr(ex)}
-	case *BasicLit:
+	case *ast.BasicLit:
 		return []Value{&PrimValue{
 			Type:  ex.Type,
 			v:     ex.Value,
 			known: true,
 		}}
-	case *Ident:
+	case *ast.Ident:
 		return []Value{e.GetVar(ex.Name)}
 	default:
 		panic(fmt.Sprintf("TODO %+T", ex))
@@ -168,7 +170,7 @@ type Block struct {
 	vars map[string]Value
 	// true if we're in a branch block
 	branch bool
-	// List of vars that have branched in children Blocks
+	// List of vars that have branched in children branch Blocks
 	branchVars []Value
 	// Pointer to parent Block
 	Parent *Block
@@ -179,15 +181,15 @@ type Value interface {
 	AsUnknown() Value
 	Set(Value)
 	Known() bool
-	Lit() Expr
+	Lit() ast.Expr
 }
 
 // If known is true the value will be set to 0 (default go value)
-func NewValue(typ Type, known bool) Value {
+func NewValue(typ ast.Type, known bool) Value {
 	switch typ := typ.(type) {
-	case *PrimType:
+	case *ast.PrimType:
 		return &PrimValue{known: known, v: 0, Type: *typ}
-	case *StructDecl:
+	case *ast.StructDecl:
 		v := make(map[string]Value)
 		for _, field := range typ.Fields {
 			v[field.Name] = NewValue(field.Type, known)
@@ -204,11 +206,11 @@ func (*StructValue) valueNode() {}
 type PrimValue struct {
 	known bool
 	v     int64
-	Type  PrimType
+	Type  ast.PrimType
 }
 
 func (v *PrimValue) V() int64 {
-	assert(v.known, "unreachable: value is unknown")
+	Assert(v.known, "unreachable: value is unknown")
 	return v.v
 }
 
@@ -230,15 +232,15 @@ func (v *PrimValue) Known() bool {
 func (v *PrimValue) String() string {
 	if !v.known {
 		return "unknown"
-	} else if v.Type.signed {
+	} else if v.Type.Signed {
 		return fmt.Sprintf("%v", v.v)
 	} else {
 		return fmt.Sprintf("%v", uint64(v.v))
 	}
 }
 
-func (v *PrimValue) Lit() Expr {
-	return &BasicLit{
+func (v *PrimValue) Lit() ast.Expr {
+	return &ast.BasicLit{
 		Type:  v.Type,
 		Value: v.V(),
 	}
@@ -246,7 +248,7 @@ func (v *PrimValue) Lit() Expr {
 
 type StructValue struct {
 	V    map[string]Value
-	Type *StructDecl
+	Type *ast.StructDecl
 }
 
 func (v *StructValue) AsUnknown() Value {
@@ -272,20 +274,20 @@ func (v *StructValue) Known() bool {
 	return known
 }
 
-func (v *StructValue) Lit() Expr {
-	var values []Expr
+func (v *StructValue) Lit() ast.Expr {
+	var values []ast.Expr
 	for _, f := range v.Type.Fields {
 		value := v.V[f.Name].Lit()
 		values = append(values, value)
 	}
-	return &StructLit{
+	return &ast.StructLit{
 		Type:   v.Type,
 		Values: values,
 	}
 }
 
 type TransformUnroll struct {
-	pkg         *Package
+	pkg         *ast.Package
 	eval        Evaluator
 	cfg         UnrollConfig
 	blockCnt    int
@@ -301,7 +303,7 @@ type UnrollConfig struct {
 	MaxIter int
 }
 
-func NewTransformUnroll(pkg *Package) TransformUnroll {
+func NewTransformUnroll(pkg *ast.Package) TransformUnroll {
 	return TransformUnroll{
 		pkg: pkg,
 		cfg: UnrollConfig{
@@ -311,15 +313,15 @@ func NewTransformUnroll(pkg *Package) TransformUnroll {
 	}
 }
 
-func (t *TransformUnroll) NewBlockStmt() *BlockStmt {
-	bs := &BlockStmt{
+func (t *TransformUnroll) NewBlockStmt() *ast.BlockStmt {
+	bs := &ast.BlockStmt{
 		Id: t.blockCnt,
 	}
 	t.blockCnt += 1
 	return bs
 }
 
-func (t *TransformUnroll) BlockStmt(bs *BlockStmt, branch bool) *BlockStmt {
+func (t *TransformUnroll) BlockStmt(bs *ast.BlockStmt, branch bool) *ast.BlockStmt {
 	bs1 := t.NewBlockStmt()
 	t.blockIdMap[bs.Id] = bs1.Id
 	t.eval.PushBlock(bs1.Id)
@@ -331,7 +333,7 @@ func (t *TransformUnroll) BlockStmt(bs *BlockStmt, branch bool) *BlockStmt {
 	return bs1
 }
 
-func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
+func (t *TransformUnroll) LoopStmt(ls *ast.LoopStmt) ast.Stmt {
 	bs := t.NewBlockStmt()
 	t.loopBlockId = bs.Id
 	for _, s := range ls.Init {
@@ -339,7 +341,7 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	}
 	i := 0
 	for ; i < t.cfg.MaxIter; i++ {
-		var condExprUnknown Expr
+		var condExprUnknown ast.Expr
 		if ls.Cond != nil {
 			condExpr, condValue := t.ExprOne(ls.Cond)
 			cond := condValue.(*PrimValue)
@@ -355,14 +357,14 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 		// is false.
 		if condExprUnknown != nil {
 			body := t.NewBlockStmt()
-			body.List.Push(&EndBlock{
+			body.List.Push(&ast.EndBlock{
 				Id: t.loopBlockId,
 			})
-			cond := &UnaryExpr{
-				Op: NOT,
+			cond := &ast.UnaryExpr{
+				Op: ast.NOT,
 				X:  condExprUnknown,
 			}
-			bs.List.Push(&IfStmt{
+			bs.List.Push(&ast.IfStmt{
 				Cond: cond,
 				Body: body,
 				Else: nil,
@@ -380,17 +382,17 @@ func (t *TransformUnroll) LoopStmt(ls *LoopStmt) Stmt {
 	return bs
 }
 
-func (t *TransformUnroll) IfStmt(is *IfStmt, branch bool) []Stmt {
+func (t *TransformUnroll) IfStmt(is *ast.IfStmt, branch bool) []ast.Stmt {
 	condExpr, condValue := t.ExprOne(is.Cond)
 	cond := condValue.(*PrimValue)
 	// If we can evaluate the if condition, we remove the if already
 	if cond.Known() {
 		if cond.V() == 1 {
-			return []Stmt{t.BlockStmt(is.Body, branch)}
+			return []ast.Stmt{t.BlockStmt(is.Body, branch)}
 		} else if is.Else != nil {
 			return t.Stmt(is.Else, branch)
 		} else {
-			return []Stmt{}
+			return []ast.Stmt{}
 		}
 	}
 	bodyBlockStmt := t.BlockStmt(is.Body, true)
@@ -402,23 +404,23 @@ func (t *TransformUnroll) IfStmt(is *IfStmt, branch bool) []Stmt {
 		v.Set(v.AsUnknown())
 	}
 	curBlock.branchVars = nil
-	return []Stmt{&IfStmt{
+	return []ast.Stmt{&ast.IfStmt{
 		Cond: condExpr,
 		Body: bodyBlockStmt,
 		Else: elseStmt,
 	}}
 }
 
-func (t *TransformUnroll) ExprOne(e Expr) (Expr, Value) {
+func (t *TransformUnroll) ExprOne(e ast.Expr) (ast.Expr, Value) {
 	expr, value := t.Expr(e)
-	assert(len(expr) == 1)
-	assert(len(value) == 1)
+	Assert(len(expr) == 1)
+	Assert(len(value) == 1)
 	return expr[0], value[0]
 }
 
-func (t *TransformUnroll) Expr(e Expr) ([]Expr, []Value) {
-	if e, ok := e.(*CallExpr); ok {
-		var ft FuncType
+func (t *TransformUnroll) Expr(e ast.Expr) ([]ast.Expr, []Value) {
+	if e, ok := e.(*ast.CallExpr); ok {
+		var ft ast.FuncType
 		for _, f := range t.pkg.Funcs {
 			if f.Name == e.Fun {
 				ft = f.Type
@@ -428,29 +430,28 @@ func (t *TransformUnroll) Expr(e Expr) ([]Expr, []Value) {
 		for _, f := range ft.Results {
 			vs = append(vs, NewValue(f.Type, false))
 		}
-		return []Expr{e}, vs
+		return []ast.Expr{e}, vs
 	}
 
 	values := t.eval.Eval(e)
-	assert(len(values) == 1)
+	Assert(len(values) == 1)
 	vs := []Value{values[0]}
 	if values[0].Known() {
-		return []Expr{values[0].Lit()}, vs
+		return []ast.Expr{values[0].Lit()}, vs
 	}
 
 	switch e := e.(type) {
-	case *BinaryExpr:
-		x, _ := t.Expr(e.X)
-		y, _ := t.Expr(e.Y)
-		assert(len(x) == 1 && len(y) == 1)
-		return []Expr{&BinaryExpr{X: x[0], Op: e.Op, Y: y[0]}}, vs
-	case *Ident:
-		return []Expr{e}, vs
-	case *StructLit:
+	case *ast.BinaryExpr:
+		x, _ := t.ExprOne(e.X)
+		y, _ := t.ExprOne(e.Y)
+		return []ast.Expr{&ast.BinaryExpr{X: x, Op: e.Op, Y: y}}, vs
+	case *ast.Ident:
+		return []ast.Expr{e}, vs
+	case *ast.StructLit:
 		panic("TODO")
-	case *SelectorExpr:
+	case *ast.SelectorExpr:
 		panic("TODO")
-	case *IndexExpr:
+	case *ast.IndexExpr:
 		panic("TODO")
 	default:
 		panic("unreachable")
@@ -458,19 +459,19 @@ func (t *TransformUnroll) Expr(e Expr) ([]Expr, []Value) {
 
 }
 
-func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
+func (t *TransformUnroll) Stmt(s ast.Stmt, branch bool) []ast.Stmt {
 	switch s := s.(type) {
-	case *LoopStmt:
-		return []Stmt{t.LoopStmt(s)}
-	case *BlockStmt:
-		return []Stmt{t.BlockStmt(s, branch)}
-	case *DeclStmt:
-		varDecl := s.Decl.(*VarDecl)
+	case *ast.LoopStmt:
+		return []ast.Stmt{t.LoopStmt(s)}
+	case *ast.BlockStmt:
+		return []ast.Stmt{t.BlockStmt(s, branch)}
+	case *ast.DeclStmt:
+		varDecl := s.Decl.(*ast.VarDecl)
 		t.eval.AddVar(varDecl.Name, varDecl.Type, true)
-		return []Stmt{s}
-	case *AssignStmt:
+		return []ast.Stmt{s}
+	case *ast.AssignStmt:
 		rhs, values := t.Expr(s.Rhs)
-		var ss Stmts
+		var ss ast.Stmts
 		for i, l := range s.Lhs {
 			if l.Parent != nil {
 				panic("TODO")
@@ -480,30 +481,30 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 			}
 			t.eval.SetVar(l.Name, values[i])
 			if values[i].Known() {
-				ss.Push(&MetaStmt{
-					&Comment{Value: fmt.Sprintf("%v = %v",
-						l.Name, SprintGoExpr(s.Rhs))},
+				ss.Push(&ast.MetaStmt{
+					Meta: &ast.Comment{Value: fmt.Sprintf("%v = %v",
+						l.Name, ast.SprintGoExpr(s.Rhs))},
 				})
 			}
 		}
 		if len(rhs) == 1 {
-			ss.Push(&AssignStmt{Lhs: s.Lhs, Rhs: rhs[0]})
+			ss.Push(&ast.AssignStmt{Lhs: s.Lhs, Rhs: rhs[0]})
 		} else {
-			assert(len(rhs) == len(s.Lhs))
+			Assert(len(rhs) == len(s.Lhs))
 			for i, lhs := range s.Lhs {
-				ss.Push(&AssignStmt{Lhs: []VarRef{lhs}, Rhs: rhs[i]})
+				ss.Push(&ast.AssignStmt{Lhs: []ast.VarRef{lhs}, Rhs: rhs[i]})
 			}
 		}
 		return ss
-	case *IfStmt:
+	case *ast.IfStmt:
 		return t.IfStmt(s, branch)
-	case *EndBlock:
-		return []Stmt{&EndBlock{
+	case *ast.EndBlock:
+		return []ast.Stmt{&ast.EndBlock{
 			Id: t.blockIdMap[s.Id],
 		}}
-	case *BranchStmt:
+	case *ast.BranchStmt:
 		switch s.Tok {
-		case BREAK:
+		case ast.BREAK:
 			branchBreak := false
 			for i := 0; i < len(t.eval.blocks); i++ {
 				depth := len(t.eval.blocks) - 1 - i
@@ -524,22 +525,25 @@ func (t *TransformUnroll) Stmt(s Stmt, branch bool) []Stmt {
 			if !branchBreak {
 				t.breakLoop = true
 			}
-			return []Stmt{&EndBlock{
+			return []ast.Stmt{&ast.EndBlock{
 				Id: t.loopBlockId,
 			}}
-		case CONTINUE:
-			return []Stmt{&EndBlock{
+		case ast.CONTINUE:
+			return []ast.Stmt{&ast.EndBlock{
 				Id: t.iterBlockId,
 			}}
 		default:
 			panic("unreachable")
 		}
+	case nil:
+		return []ast.Stmt{nil}
 	default:
-		return []Stmt{s}
+		// panic(fmt.Errorf("TODO %+T", s))
+		panic("unreachable")
 	}
 }
 
-func (t *TransformUnroll) FuncDecl(fd *FuncDecl) *FuncDecl {
+func (t *TransformUnroll) FuncDecl(fd *ast.FuncDecl) *ast.FuncDecl {
 	t.eval.PushBlock(t.blockCnt)
 	t.blockCnt += 1
 	for _, f := range fd.Type.Params {
@@ -549,30 +553,30 @@ func (t *TransformUnroll) FuncDecl(fd *FuncDecl) *FuncDecl {
 		t.eval.AddVar(f.Name, f.Type, true)
 	}
 	defer t.eval.PopBlock()
-	return &FuncDecl{
+	return &ast.FuncDecl{
 		Name: fd.Name,
 		Type: fd.Type,
 		Body: t.BlockStmt(fd.Body, false),
 	}
 }
 
-func (t *TransformUnroll) Transform() Package {
-	var funcs []*FuncDecl
+func (t *TransformUnroll) Transform() ast.Package {
+	var funcs []*ast.FuncDecl
 	for _, f := range t.pkg.Funcs {
 		funcs = append(funcs, t.FuncDecl(f))
 	}
-	return Package{
+	return ast.Package{
 		Structs: t.pkg.Structs,
 		Funcs:   funcs,
 	}
 }
 
-func unroll(pkg *Package) Package {
+func unroll(pkg *ast.Package) ast.Package {
 	t := NewTransformUnroll(pkg)
 	return t.Transform()
 }
 
-func Unroll(pkg *Package) (p Package, err error) {
+func Unroll(pkg *ast.Package) (p ast.Package, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			var ok bool

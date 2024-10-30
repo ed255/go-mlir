@@ -7,20 +7,11 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	. "gocircuit/common"
 	"log"
 	"runtime/debug"
 	"strconv"
 )
-
-func assert(check bool, msg ...string) {
-	if !check {
-		if len(msg) == 0 {
-			panic(fmt.Errorf("assert failed"))
-		} else {
-			panic(fmt.Errorf("assert failed: %v", msg[0]))
-		}
-	}
-}
 
 type Var struct {
 	SrcName string
@@ -106,7 +97,7 @@ func (t *Translator) Type(typ types.Type) Type {
 		switch underlying := underlying.(type) {
 		case *types.Struct:
 			sd, ok := t.structs[typ.Obj().Name()]
-			assert(ok)
+			Assert(ok)
 			return sd
 		default:
 			panic(fmt.Errorf("unsupported Underlying Type %+#v", underlying))
@@ -319,7 +310,7 @@ func (t *Translator) ExprTypes(e ast.Expr) []Type {
 }
 
 func (t *Translator) BranchStmt(branchStmt *ast.BranchStmt) Stmt {
-	assert(branchStmt.Label == nil, "unsupported")
+	Assert(branchStmt.Label == nil, "unsupported")
 	var tok BranchToken
 	switch branchStmt.Tok {
 	case token.BREAK:
@@ -384,7 +375,7 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 			})
 		}
 	case token.ASSIGN:
-		assert(len(assignStmt.Rhs) <= 1, "unsupported assign with multiple rhs")
+		Assert(len(assignStmt.Rhs) <= 1, "unsupported assign with multiple rhs")
 		i := 0
 		for _, rhs := range assignStmt.Rhs {
 			r := t.Expr(rhs)
@@ -399,8 +390,8 @@ func (t *Translator) AssignStmt(assignStmt *ast.AssignStmt) []Stmt {
 			})
 		}
 	case token.ADD_ASSIGN:
-		assert(len(assignStmt.Rhs) == 1)
-		assert(len(assignStmt.Lhs) == 1)
+		Assert(len(assignStmt.Rhs) == 1)
+		Assert(len(assignStmt.Lhs) == 1)
 		lhs := assignStmt.Lhs[0]
 		rhs := t.Expr(assignStmt.Rhs[0])
 		ss.Push(&AssignStmt{
@@ -538,7 +529,7 @@ func (t *Translator) ForStmt(forStmt *ast.ForStmt) Stmt {
 }
 
 func (t *Translator) IfStmt(ifStmt *ast.IfStmt) *IfStmt {
-	assert(ifStmt.Init == nil, "unsupported IfStmt.Init")
+	Assert(ifStmt.Init == nil, "unsupported IfStmt.Init")
 	cond := t.Expr(ifStmt.Cond)
 	body := t.BlockStmt(ifStmt.Body)
 	var es Stmt
